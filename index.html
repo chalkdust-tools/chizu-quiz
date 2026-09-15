@@ -1,129 +1,212 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ja">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>社会科 基礎地図トレーニング</title>
-<link rel="stylesheet" href="style.css">
-</head>
-<body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#184e77" />
+    <title>社会科 基礎力マップ</title>
+    <link rel="stylesheet" href="./styles.css?v=5" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="app-header">
+        <p class="eyebrow">20〜40分でくり返し</p>
+        <h1>社会科 基礎力マップ</h1>
+        <p>クイズで練習するか、自習プリントを作るか選べます。</p>
+      </header>
 
-<div id="app">
-
-  <!-- ホーム画面：範囲選択とコース選択 -->
-  <section id="screen-home" class="screen">
-    <h1>社会科 基礎地図トレーニング</h1>
-    <p class="lead">日本地理・世界地理の基本を、くり返し練習しよう。</p>
-    <p class="lead"><a href="print.html">📄 自習プリントを作る（先生用）</a></p>
-
-    <div class="box">
-      <h2>コースを選ぼう</h2>
-      <p class="hint">「今日の10問／20問」は範囲の設定なしで、全部からバランスよく出題します。</p>
-      <div class="course-grid">
-        <button class="course-btn" data-course="today10">今日の10問</button>
-        <button class="course-btn" data-course="today20">今日の20問</button>
-        <button class="course-btn" data-course="30">30問（下の範囲で）</button>
-        <button class="course-btn" data-course="endless">エンドレス（下の範囲で）</button>
-        <button class="course-btn" id="btn-review" data-course="review" disabled>まちがえた問題だけ復習</button>
-      </div>
-    </div>
-
-    <div class="box">
-      <h2>出題する範囲を選ぼう</h2>
-      <p class="hint">「30問」「エンドレス」で使います。</p>
-      <div class="check-grid">
-        <label class="check-item"><input type="checkbox" id="chk-jpMap" checked> 日本地図</label>
-        <label class="check-item"><input type="checkbox" id="chk-jpCapital" checked> 都道府県庁所在地</label>
-        <label class="check-item"><input type="checkbox" id="chk-jpRegion" checked> 地方区分</label>
-        <label class="check-item"><input type="checkbox" id="chk-worldMap"> 世界地図</label>
-        <label class="check-item"><input type="checkbox" id="chk-worldCapital"> 世界の首都</label>
-        <label class="check-item"><input type="checkbox" id="chk-worldFlag"> 国旗</label>
-      </div>
-
-      <details class="custom-box">
-        <summary>さらに絞り込む（任意）</summary>
-        <div class="filter-row">
-          <p class="region-multi-label">日本の地方で絞る（複数選択できます）</p>
-          <div id="filter-jp-regions" class="region-check-grid"></div>
-
-          <p class="region-multi-label">世界の地域で絞る（複数選択できます）</p>
-          <div id="filter-world-regions" class="region-check-grid"></div>
-
-          <label>難易度で絞る
-            <select id="filter-level">
-              <option value="">すべて</option>
-              <option value="easy">やさしい問題だけ</option>
-              <option value="medium">少し考える問題だけ</option>
-              <option value="hard">考える問題だけ</option>
-            </select>
-          </label>
-          <p id="filter-level-note" class="filter-note">※範囲を1つだけに絞ると、指定した難易度の問題が少なく、別の難易度が混ざることがあります。複数の範囲を選ぶとより正確になります。</p>
+      <section id="home-screen" class="panel" aria-labelledby="home-title">
+        <h2 id="home-title">今日は何をする？</h2>
+        <p class="home-lead">説明を読まなくても大丈夫。下のどちらかを選んでください。</p>
+        <div class="mode-grid">
+          <button id="open-quiz-button" class="mode-button" type="button">
+            <span class="mode-letter">A</span>
+            <strong>地図クイズ</strong>
+            <small>10〜20分で、基本をくり返す</small>
+          </button>
+          <button id="open-print-button" class="mode-button" type="button">
+            <span class="mode-letter">B</span>
+            <strong>自習プリント作成</strong>
+            <small>地域を選んで、そのまま印刷</small>
+          </button>
         </div>
-      </details>
-    </div>
+        <section class="quick-start" aria-labelledby="quick-title">
+          <h3 id="quick-title">すぐ始める</h3>
+          <p id="home-message" class="message" role="alert"></p>
+          <div class="quick-grid">
+            <button type="button" data-quick-course="10"><strong>今日の10問</strong><span>おまかせ</span></button>
+            <button type="button" data-quick-course="20"><strong>今日の20問</strong><span>おまかせ</span></button>
+            <button type="button" data-quick-course="30"><strong>30問</strong><span>じっくり</span></button>
+            <button type="button" data-quick-course="endless"><strong>エンドレス</strong><span>好きなだけ</span></button>
+            <button type="button" data-quick-course="review"><strong>まちがい復習</strong><span id="quick-review-count">保存 0問</span></button>
+          </div>
+        </section>
+      </section>
 
-    <p id="home-message" class="message"></p>
+      <section id="setup-screen" class="panel hidden" aria-labelledby="setup-title">
+        <button class="back-link" data-go-home type="button">← トップへ</button>
+        <h2 id="setup-title">今日の練習を選ぶ</h2>
+        <div class="goal-box">
+          <strong>【目標】</strong>
+          <span>地図・都道府県・世界の「知っていてほしい基本」を、くり返し確認する</span>
+        </div>
+        <p class="warmup">★ まず自分のこと：今日、いちばん確認したい分野を選んでみよう。</p>
 
-    <footer class="credit">
-      地図データ: <a href="https://github.com/VictorCazanave/svg-maps" target="_blank" rel="noopener">svg-maps</a>（Victor Cazanave, CC BY 4.0）／
-      国旗データ: <a href="https://github.com/lipis/flag-icons" target="_blank" rel="noopener">flag-icons</a>（Panayiotis Lipiridis, MIT License）
-    </footer>
-  </section>
+        <fieldset>
+          <legend>出題する分野</legend>
+          <div class="scope-grid">
+            <label><input type="checkbox" name="scope" value="japanMap" checked /> 日本地図</label>
+            <label><input type="checkbox" name="scope" value="prefectureCapitals" checked /> 都道府県庁所在地</label>
+            <label><input type="checkbox" name="scope" value="regions" checked /> 地方区分</label>
+            <label><input type="checkbox" name="scope" value="worldMap" checked /> 世界地図</label>
+            <label><input type="checkbox" name="scope" value="worldCapitals" checked /> 世界の首都・地域</label>
+            <label><input type="checkbox" name="scope" value="flags" checked /> 国旗</label>
+          </div>
+        </fieldset>
 
-  <!-- クイズ画面 -->
-  <section id="screen-quiz" class="screen hidden">
-    <div class="quiz-toolbar">
-      <button id="btn-back" class="toolbar-btn">← 1問戻る</button>
-      <button id="btn-quit" class="toolbar-btn quit">クイズをやめる</button>
-    </div>
-    <div class="quiz-header">
-      <span id="quiz-progress">第1問</span>
-      <span id="quiz-score">正解 0</span>
-    </div>
+        <fieldset>
+          <legend>コース</legend>
+          <div class="course-grid">
+            <label><input type="radio" name="course" value="10" checked /> <strong>10問</strong><span>10〜15分・さっと確認</span></label>
+            <label><input type="radio" name="course" value="20" /> <strong>20問</strong><span>20〜30分・しっかり練習</span></label>
+            <label><input type="radio" name="course" value="30" /> <strong>30問</strong><span>30〜40分・じっくり</span></label>
+            <label><input type="radio" name="course" value="random" /> <strong>ランダム</strong><span>毎回ちがう20問</span></label>
+            <label><input type="radio" name="course" value="endless" /> <strong>エンドレス</strong><span>好きなところで結果を見る</span></label>
+            <label><input type="radio" name="course" value="review" /> <strong>まちがい復習</strong><span id="review-count">保存 0問</span></label>
+          </div>
+        </fieldset>
 
-    <div id="quiz-prompt" class="prompt"></div>
+        <details class="quiz-filters">
+          <summary>範囲を少し絞る</summary>
+          <div class="filter-grid">
+            <label>日本の地方
+              <select id="japan-region-filter"><option value="">全部</option></select>
+            </label>
+            <label>世界の地域
+              <select id="world-region-filter"><option value="">全部</option></select>
+            </label>
+            <label>難しさ
+              <select id="difficulty-filter">
+                <option value="">3段階をまぜる</option>
+                <option value="easy">やさしいだけ</option>
+                <option value="medium">少し考えるだけ</option>
+                <option value="think">考えるだけ</option>
+              </select>
+            </label>
+          </div>
+          <p class="division-note">このアプリでは、表示している8地方・8地域の区分に統一して出題します。</p>
+        </details>
 
-    <div id="quiz-flag" class="flag-display hidden"></div>
-    <div id="quiz-mapwrap" class="mapwrap hidden"></div>
-    <div id="quiz-choices" class="choices"></div>
+        <p id="setup-message" class="message" role="alert"></p>
+        <p class="instruction">【やること】答えを1つ選ぼう。まちがえても大丈夫。</p>
+        <button id="start-button" class="primary-button" type="button">練習スタート</button>
+      </section>
 
-    <button id="btn-dontknow" class="btn-dontknow hidden">🤔 わからない</button>
-    <div id="quiz-feedback" class="feedback hidden"></div>
-    <button id="btn-next" class="btn-next hidden">次の問題へ →</button>
-    <button id="btn-finish-endless" class="btn-next secondary hidden">終了して結果を見る</button>
-  </section>
+      <section id="quiz-screen" class="panel hidden" aria-live="polite">
+        <div class="quiz-topline">
+          <span id="category-badge" class="badge"></span>
+          <span class="quiz-topline-right">
+            <span id="progress-text"></span>
+            <button id="quit-quiz-button" type="button">ここで結果を見る</button>
+            <button id="leave-quiz-button" type="button">やめる</button>
+          </span>
+        </div>
+        <div class="progress-track" aria-hidden="true"><div id="progress-bar"></div></div>
+        <p id="course-note" class="course-note hidden"></p>
 
-  <!-- 結果画面 -->
-  <section id="screen-result" class="screen hidden">
-    <h1>結果</h1>
-    <p id="result-summary" class="result-summary"></p>
-    <h2>まちがえた問題</h2>
-    <div id="result-wrong" class="result-wrong"></div>
-    <div class="result-buttons">
-      <button id="btn-result-again" class="course-btn">もう一度やる</button>
-      <button id="btn-result-review" class="course-btn">まちがえた問題だけ復習する</button>
-      <button id="btn-result-home" class="course-btn secondary">トップに戻る</button>
-    </div>
-  </section>
+        <div id="visual-area" class="visual-area hidden">
+          <img id="japan-numbered-map" class="map-image hidden" src="./地図素材/日本地図_都道府県境_CC0.svg" alt="番号入り日本地図" />
+          <div id="japan-highlight-map" class="map-image japan-highlight-map hidden" role="img" aria-label="都道府県別日本地図"></div>
+          <div id="world-map" class="map-image world-map hidden" role="img" aria-label="世界白地図"></div>
+          <div id="flag-display" class="flag-display hidden" aria-label="国旗"></div>
+        </div>
 
-  <!-- クイズをやめる確認 -->
-  <div id="quit-modal" class="modal-overlay hidden">
-    <div class="modal-box">
-      <p class="modal-message">クイズを終了しますか？</p>
-      <div class="modal-buttons">
-        <button id="btn-quit-cancel" class="course-btn">続ける</button>
-        <button id="btn-quit-confirm" class="course-btn secondary">終了してトップへ戻る</button>
-      </div>
-    </div>
-  </div>
+        <p id="question-type" class="question-type"></p>
+        <h2 id="question-text" class="question-text"></h2>
+        <div id="choices" class="choices"></div>
+        <button id="unknown-button" class="unknown-button" type="button">わからない</button>
+        <p id="feedback" class="feedback" aria-live="assertive"></p>
+        <p id="key-hint" class="key-hint">数字キー 1〜4 でも答えられます</p>
+      </section>
 
-</div>
+      <section id="result-screen" class="panel hidden" aria-labelledby="result-title">
+        <p class="eyebrow">おつかれさま！</p>
+        <h2 id="result-title">今回の結果</h2>
+        <div class="result-grid">
+          <div><strong id="score-count">0 / 0</strong><span>正解数</span></div>
+          <div><strong id="score-rate">0%</strong><span>正答率</span></div>
+        </div>
+        <section class="assessment-box">
+          <h3>■ 評価チェック（○・△・×）</h3>
+          <p id="assessment-text"></p>
+        </section>
+        <section class="mistakes-box">
+          <h3>■ 解答（自己採点用）・まちがえた問題</h3>
+          <div id="mistakes-list"></div>
+        </section>
+        <div class="result-actions">
+          <button id="repeat-button" class="secondary-button" type="button">同じ条件でもう一度</button>
+          <button id="retry-button" class="primary-button" type="button">まちがいだけ復習</button>
+          <button id="home-button" class="secondary-button" type="button">最初にもどる</button>
+        </div>
+      </section>
 
-<script src="data/japan-data.js"></script>
-<script src="data/world-data.js"></script>
-<script src="data/region-view-data.js"></script>
-<script src="data/japan-map.js"></script>
-<script src="data/world-map.js"></script>
-<script src="app.js"></script>
-</body>
+      <section id="print-setup-screen" class="panel hidden" aria-labelledby="print-setup-title">
+        <button class="back-link" data-go-home type="button">← トップへ</button>
+        <h2 id="print-setup-title">自習プリントを作る</h2>
+        <div class="goal-box">
+          <strong>【やること】</strong>
+          <span>日本か世界を選ぶ → 地域を選ぶ → プリントを作る → 印刷する</span>
+        </div>
+        <p class="division-note">地方・地域の分け方は、この画面に表示する区分に統一しています。</p>
+
+        <fieldset>
+          <legend>1　プリントの種類</legend>
+          <div class="print-mode-switch" role="group" aria-label="プリントの種類">
+            <button type="button" data-print-mode="japan" class="selected" aria-pressed="true">日本地理</button>
+            <button type="button" data-print-mode="world" aria-pressed="false">世界地理</button>
+          </div>
+        </fieldset>
+
+        <div id="japan-print-options">
+          <fieldset>
+            <legend>2　地方を選ぶ　<span class="legend-note">複数選べます</span></legend>
+            <div id="region-picker" class="region-picker"></div>
+          </fieldset>
+
+          <details class="prefecture-details">
+            <summary>都道府県を1つずつ選ぶ</summary>
+            <p>地方ボタンを押したあと、必要な県だけ残すこともできます。</p>
+            <div id="prefecture-picker" class="prefecture-picker"></div>
+          </details>
+        </div>
+
+        <div id="world-print-options" class="hidden">
+          <fieldset>
+            <legend>2　地域を選ぶ　<span class="legend-note">複数選べます・3地域まで</span></legend>
+            <div id="world-print-region-picker" class="region-picker world-region-picker"></div>
+          </fieldset>
+          <p class="instruction">「世界全体」または地域を選びます。主要国・首都・地域を中心に、自動でやさしい問題を作ります。</p>
+        </div>
+
+        <p id="print-selection-summary" class="selection-summary">まだ選ばれていません。</p>
+        <p id="print-message" class="message" role="alert"></p>
+        <button id="make-print-button" class="primary-button" type="button">この範囲でプリントを作る</button>
+      </section>
+
+      <section id="worksheet-screen" class="worksheet-screen hidden" aria-labelledby="worksheet-title">
+        <div class="worksheet-toolbar no-print">
+          <button id="edit-print-button" class="secondary-button" type="button">← 範囲を選び直す</button>
+          <button id="remake-print-button" class="secondary-button" type="button">同じ条件でもう1枚</button>
+          <button id="print-button" class="primary-button" type="button">印刷する</button>
+        </div>
+        <div id="worksheet-pages"></div>
+      </section>
+    </main>
+    <script src="./data/prefectures.js?v=13"></script>
+    <script src="./data/countries.js?v=13"></script>
+    <script src="./data/questions.js?v=13"></script>
+    <script src="./maps-inline.js?v=13"></script>
+    <script src="./app.js?v=14"></script>
+  </body>
 </html>

@@ -1,1482 +1,1545 @@
-// =========================================================
-// 社会科 基礎地図トレーニング アプリ本体
-//
-// 「知識データ」(data/japan-data.js, data/world-data.js) と
-// 「問題テンプレート」(このファイルの中の gen〜 関数たち) を
-// 組み合わせて問題を作る構造になっています。
-//
-// 問題データ自体を増やしたいときはデータファイルを、
-// 出題の「聞き方」を増やしたいときはこのファイルの
-// TEMPLATES 一覧に新しい gen〜 関数を足してください。
-// =========================================================
+const CATEGORY_LABELS = {
+  japanMap: "日本地図",
+  prefectureCapitals: "都道府県庁所在地",
+  regions: "地方区分",
+  worldMap: "世界地図",
+  worldCapitals: "世界の首都・地域",
+  flags: "国旗",
+};
+const STORAGE_KEY = "social-map-wrong-questions-v4";
 
-// ---------- 小さな便利関数 ----------
-function randInt(n) {
-  return Math.floor(Math.random() * n);
-}
-function randomItem(arr) {
-  return arr[randInt(arr.length)];
-}
-function shuffle(arr) {
-  const a = arr.slice();
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = randInt(i + 1);
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
-function sampleN(arr, n) {
-  return shuffle(arr).slice(0, n);
-}
-function sampleExcluding(arr, excludeFn, n) {
-  return sampleN(arr.filter((x) => !excludeFn(x)), n);
-}
-function stripAreaSuffix(name) {
-  return name.replace(/(都|道|府|県)$/, "");
-}
-function stripCitySuffix(name) {
-  return name.replace(/(市|区)$/, "");
-}
-
-const ALL_CATEGORIES = ["jpMap", "jpCapital", "jpRegion", "worldMap", "worldCapital", "worldFlag"];
-
-// ---------- 難易度づくりの下ごしらえ ----------
-// 県名と県庁所在地（国名と首都）がほぼ同じ文字の場合、「○○の県庁所在地は？」を
-// 逆から聞くだけで答えが問題文に出てしまい、「少し考える」「考える」問題として
-// 成立しなくなる。そうした項目は、逆読み・組み合わせ系の問題では使わないようにする。
-function isJpCapitalObvious(pref) {
-  return stripAreaSuffix(pref.name) === stripCitySuffix(pref.capital);
-}
-function isWorldCapitalObvious(country) {
-  // 完全一致（シンガポールなど）に加えて、首都名が国名をそのまま含む場合
-  // （メキシコ→メキシコシティ など）も答えが推測できてしまうため対象にする
-  return country.name === country.capital || country.capital.includes(country.name);
-}
-// 候補が1つもなくなっても、答えが露骨になる項目まで戻して無理に使わない
-// （呼び出し側は、空配列が返ってきたらそのテンプレートをスキップする）
-function nonObviousJpItems(pool) {
-  return pool.filter((p) => !isJpCapitalObvious(p));
-}
-function nonObviousWorldItems(pool) {
-  return pool.filter((c) => !isWorldCapitalObvious(c));
-}
-
-// できるだけ「本当にまぎらわしい」ひっかけ選択肢にするため、同じ地方・地域の
-// 項目を半分くらい混ぜつつ、残りは全体から選ぶ（全部が近い項目・全部が
-// 遠く離れた項目、のどちらかに偏らないようにする）
-// 同じ地方・地域だけで十分な数（n個以上）そろうなら、そこだけから選ぶ。
-// 足りないときだけ、残りを全国・全世界から補う。
-function pickMixedDecoys(pool, exclude, n) {
-  const sameRegion = pool.filter((x) => x.id !== exclude.id && x.region === exclude.region);
-  if (sameRegion.length >= n) return sampleN(sameRegion, n);
-  const usedIds = new Set([exclude.id, ...sameRegion.map((x) => x.id)]);
-  const rest = pool.filter((x) => !usedIds.has(x.id));
-  const far = sampleN(rest, n - sameRegion.length);
-  return shuffle([...sameRegion, ...far]);
-}
-
-// ○×問題で「まちがった方」を見せるときも、同じ地方・地域からの方が
-// 単純な遠い県名・国名の入れ替えより、まぎらわしく・実践的になる
-// 同じ地方・地域に候補があれば必ずそこから選ぶ（100%）。
-// 候補がまったくない（北海道など）ときだけ全国・全世界から選ぶ。
-function pickMaruBatsuDonor(pool, exclude) {
-  const sameRegion = pool.filter((x) => x.id !== exclude.id && x.region === exclude.region);
-  if (sameRegion.length) return randomItem(sameRegion);
-  return randomItem(pool.filter((x) => x.id !== exclude.id));
-}
-
-// ---------- 国旗の表示（絵文字ではなくローカルのSVG画像ファイルを使う） ----------
-// Windows等の環境によっては国旗の絵文字が「JP」のような文字表示になってしまうため、
-// assets/flags/ に保存した本物のSVG画像を <img> で表示する。
-// ファイル名は国データの id と対応している（例: id "jp" → assets/flags/jp.svg）。
-function buildFlagImg(countryId, extraClass) {
-  const country = WORLD_COUNTRIES.find((c) => c.id === countryId);
-  const name = country ? country.name : "";
-  const img = document.createElement("img");
-  img.src = `assets/flags/${countryId}.svg`;
-  img.alt = name ? `${name}の国旗` : "国旗";
-  img.className = "flag-img" + (extraClass ? " " + extraClass : "");
-  img.onerror = () => {
-    img.onerror = null;
-    const fallback = document.createElement("span");
-    fallback.className = "flag-fallback";
-    fallback.textContent = name ? `${name}（国旗画像を表示できません）` : "国旗画像を表示できません";
-    img.replaceWith(fallback);
-  };
-  return img;
-}
-
-// targets（複数）それぞれに対して、できるだけ「その項目と同じ地方・地域」から
-// 借りてきた、重複しないドナーを1つずつ選ぶ（組み合わせ問題のひっかけ用）
-function pickDistinctDonors(pool, targets) {
-  const used = new Set();
-  const donors = [];
-  for (const t of targets) {
-    const avail = pool.filter((p) => !used.has(p.id));
-    if (avail.length === 0) return null;
-    const donor = pickMaruBatsuDonor(avail, t);
-    donors.push(donor);
-    used.add(donor.id);
-  }
-  return donors;
-}
-
-// ---------- 問題オブジェクトの共通の組み立て ----------
-function makeChoiceQuestion(category, prompt, correctLabel, wrongLabels, extra) {
-  const choices = shuffle([
-    { label: correctLabel, correct: true },
-    ...wrongLabels.map((label) => ({ label, correct: false })),
-  ]);
-  return Object.assign(
-    {
-      category,
-      prompt,
-      mapMode: null,
-      mapHighlight: null,
-      mapClickable: false,
-      targetId: null,
-      flagPrompt: null,
-      isFlagChoices: false,
-      choices,
-      answerText: correctLabel,
-      itemIds: [],
-    },
-    extra || {}
-  );
-}
-
-function makeTrueFalseQuestion(category, statement, isTrue, factText, extra) {
-  return makeChoiceQuestion(
-    category,
-    statement,
-    isTrue ? "○" : "×",
-    [isTrue ? "×" : "○"],
-    Object.assign({ isTrueFalse: true, answerText: isTrue ? "○（正しい）" : `×　正しくは「${factText}」` }, extra || {})
-  );
-}
-
-// ---------- 出題範囲の絞り込み（任意フィルタ）に対応した知識プール ----------
-// 地方・地域は複数選べるので、フィルタは配列で持つ（空配列＝絞り込みなし）
-function getJpPool() {
-  const regions = state.filters.jpRegions;
-  return regions && regions.length ? JAPAN_PREFECTURES.filter((p) => regions.includes(p.region)) : JAPAN_PREFECTURES;
-}
-function getWorldPool() {
-  const regions = state.filters.worldRegions;
-  return regions && regions.length ? WORLD_COUNTRIES.filter((c) => regions.includes(c.region)) : WORLD_COUNTRIES;
-}
-// 「○○地方にある県は？」のような、地方そのものを1つ選ぶ系の問題で使う
-// （複数選んでいれば、その中からランダムに1つ）
-function pickJpRegionForQuestion() {
-  const regions = state.filters.jpRegions;
-  return regions && regions.length ? randomItem(regions) : randomItem(JAPAN_REGIONS);
-}
-function pickWorldRegionForQuestion() {
-  const regions = state.filters.worldRegions;
-  return regions && regions.length ? randomItem(regions) : randomItem(WORLD_REGIONS);
-}
-
-// 複数の地方・地域を選んでいるとき、県・国の数が多い地方に問題が偏らないよう、
-// 先に地方・地域をランダムに1つ選び、そのあとでその中から項目を選ぶ（2段階抽選）。
-// 絞り込みなしのときは、これまで通りプール全体から直接選ぶ。
-// pool にはあらかじめ絞り込んだ候補（nonObvious等）を渡してもよく、選んだ地方に
-// 候補が1つもない場合は他の地方を順に試し、それでも無ければ null を返す。
-function pickBalancedItem(pool, regions) {
-  if (regions && regions.length) {
-    for (const region of shuffle(regions)) {
-      const inRegion = pool.filter((x) => x.region === region);
-      if (inRegion.length) return randomItem(inRegion);
+const $ = (selector) => document.querySelector(selector);
+const homeScreen = $("#home-screen");
+const setupScreen = $("#setup-screen");
+const quizScreen = $("#quiz-screen");
+const resultScreen = $("#result-screen");
+const printSetupScreen = $("#print-setup-screen");
+const worksheetScreen = $("#worksheet-screen");
+const startButton = $("#start-button");
+const retryButton = $("#retry-button");
+const homeButton = $("#home-button");
+const japanHighlightMapElement = $("#japan-highlight-map");
+const worldMapElement = $("#world-map");
+let worldMapSvgMarkup = "";
+const japanMapReady = Promise.resolve()
+  .then(() => {
+    const svg = window.INLINE_MAPS?.japan;
+    if (!svg) throw new Error("日本地図を読み込めませんでした。");
+    japanHighlightMapElement.innerHTML = svg;
+    const mapSvg = japanHighlightMapElement.querySelector("svg");
+    mapSvg?.setAttribute("preserveAspectRatio", "xMidYMid meet");
+    if (mapSvg) mapSvg.dataset.fullViewBox = mapSvg.getAttribute("viewBox") || "0 0 2000 2000";
+  })
+  .catch(() => {
+    japanHighlightMapElement.textContent = "日本地図を読み込めませんでした。";
+  });
+const worldMapReady = Promise.resolve()
+  .then(() => {
+    const svg = window.INLINE_MAPS?.world;
+    if (!svg) throw new Error("世界地図を読み込めませんでした。");
+    worldMapSvgMarkup = svg;
+    worldMapElement.innerHTML = svg;
+    const mapSvg = worldMapElement.querySelector("svg");
+    if (mapSvg && !mapSvg.hasAttribute("viewBox")) {
+      mapSvg.setAttribute("viewBox", `0 0 ${mapSvg.getAttribute("width")} ${mapSvg.getAttribute("height")}`);
     }
-    return null;
-  }
-  return pool.length ? randomItem(pool) : null;
-}
-function pickBalancedJpItem() {
-  return pickBalancedItem(getJpPool(), state.filters.jpRegions);
-}
-function pickBalancedWorldItem() {
-  return pickBalancedItem(getWorldPool(), state.filters.worldRegions);
-}
-function pickBalancedNonObviousJpItem() {
-  return pickBalancedItem(nonObviousJpItems(getJpPool()), state.filters.jpRegions);
-}
-function pickBalancedNonObviousWorldItem() {
-  return pickBalancedItem(nonObviousWorldItems(getWorldPool()), state.filters.worldRegions);
-}
-
-// =========================================================
-// 日本地理：問題テンプレート
-// すべて (forcedItem) を受け取れるようにしてあります。
-// forcedItem を渡すと、その県について出題します（まちがえた問題の再出題・復習で使用）。
-// =========================================================
-function genJpMapToName(forcedItem) {
-  const pref = forcedItem || pickBalancedJpItem();
-  const wrongs = pickMixedDecoys(JAPAN_PREFECTURES, pref, 3).map((p) => p.name);
-  return makeChoiceQuestion("jpMap", "地図で色がついているのはどこ？", pref.name, wrongs, {
-    mapMode: "japan",
-    mapHighlight: pref.id,
-    itemIds: [pref.id],
+    mapSvg?.setAttribute("preserveAspectRatio", "xMidYMid meet");
+    if (mapSvg) mapSvg.dataset.fullViewBox = mapSvg.getAttribute("viewBox");
+  })
+  .catch(() => {
+    worldMapElement.textContent = "世界地図を読み込めませんでした。";
   });
-}
 
-function genJpNameToMap(forcedItem) {
-  const pref = forcedItem || pickBalancedJpItem();
-  return {
-    category: "jpMap",
-    prompt: `「${pref.name}」はどこ？ 地図をタップしよう`,
-    mapMode: "japan",
-    mapHighlight: null,
-    mapClickable: true,
-    targetId: pref.id,
-    flagPrompt: null,
-    isFlagChoices: false,
-    choices: null,
-    answerText: pref.name,
-    itemIds: [pref.id],
-  };
-}
-
-function genJpMapToRegion(forcedItem) {
-  const pref = forcedItem || pickBalancedJpItem();
-  const wrongs = sampleExcluding(JAPAN_REGIONS, (r) => r === pref.region, 3);
-  return makeChoiceQuestion("jpMap", "地図で色がついている都道府県は何地方？", pref.region, wrongs, {
-    mapMode: "japan",
-    mapHighlight: pref.id,
-    itemIds: [pref.id],
-  });
-}
-
-function genJpMapToCapital(forcedItem) {
-  const pref = forcedItem || pickBalancedJpItem();
-  const wrongs = pickMixedDecoys(JAPAN_PREFECTURES, pref, 3).map((p) => p.capital);
-  return makeChoiceQuestion("jpMap", "地図で色がついている都道府県の都道府県庁所在地は？", pref.capital, wrongs, {
-    mapMode: "japan",
-    mapHighlight: pref.id,
-    itemIds: [pref.id],
-  });
-}
-
-// 地図読み取り＋県庁所在地の知識を組み合わせる「考える」問題。
-// （県名と県庁所在地が同じ文字かどうか、ではなく、○×はランダムに半々にして、
-// 　地図から県を特定したうえで正しい組み合わせか判断させる）
-function genJpMapCapitalCheck(forcedItem) {
-  const pref = forcedItem || pickBalancedJpItem();
-  const isTrue = Math.random() < 0.5;
-  const shown = isTrue ? pref.capital : pickMaruBatsuDonor(JAPAN_PREFECTURES, pref).capital;
-  const statement = `地図で色がついている都道府県の都道府県庁所在地は「${shown}」である`;
-  return makeTrueFalseQuestion("jpMap", statement, isTrue, `${pref.name}の都道府県庁所在地は${pref.capital}`, {
-    mapMode: "japan",
-    mapHighlight: pref.id,
-    itemIds: [pref.id],
-  });
-}
-
-function genJpPrefToRegion(forcedItem) {
-  const pref = forcedItem || pickBalancedJpItem();
-  const wrongs = sampleExcluding(JAPAN_REGIONS, (r) => r === pref.region, 3);
-  return makeChoiceQuestion("jpRegion", `${pref.name}は何地方？`, pref.region, wrongs, { itemIds: [pref.id] });
-}
-
-function genJpRegionToPref() {
-  const region = pickJpRegionForQuestion();
-  const inRegion = JAPAN_PREFECTURES.filter((p) => p.region === region);
-  const correct = randomItem(inRegion);
-  const wrongs = sampleExcluding(JAPAN_PREFECTURES, (p) => p.region === region, 3).map((p) => p.name);
-  return makeChoiceQuestion("jpRegion", `${region}にある都道府県はどれ？`, correct.name, wrongs, { itemIds: [correct.id] });
-}
-
-function genJpRegionNotIn() {
-  const region = pickJpRegionForQuestion();
-  const inRegion = JAPAN_PREFECTURES.filter((p) => p.region === region);
-  const outRegion = JAPAN_PREFECTURES.filter((p) => p.region !== region);
-  if (inRegion.length < 3) return null; // 北海道など県が少ない地方はスキップ
-  const decoys = sampleN(inRegion, 3).map((p) => p.name);
-  const correct = randomItem(outRegion);
-  return makeChoiceQuestion("jpRegion", `${region}に「ない」都道府県はどれ？`, correct.name, decoys, { itemIds: [correct.id] });
-}
-
-function genJpRegionMaruBatsu(forcedItem) {
-  const pref = forcedItem || pickBalancedJpItem();
-  const isTrue = Math.random() < 0.5;
-  const shown = isTrue ? pref.region : randomItem(JAPAN_REGIONS.filter((r) => r !== pref.region));
-  const statement = `${pref.name}は${shown}地方にある`;
-  return makeTrueFalseQuestion("jpRegion", statement, isTrue, `${pref.name}は${pref.region}地方`, { itemIds: [pref.id] });
-}
-
-function genJpPairSameRegion() {
-  const a = pickBalancedJpItem();
-  if (!a) return null;
-  const wantTrue = Math.random() < 0.5;
-  let partner;
-  if (wantTrue) {
-    const sameRegion = JAPAN_PREFECTURES.filter((x) => x.id !== a.id && x.region === a.region);
-    partner = sameRegion.length ? randomItem(sameRegion) : randomItem(JAPAN_PREFECTURES.filter((x) => x.id !== a.id));
-  } else {
-    const outside = JAPAN_PREFECTURES.filter((x) => x.region !== a.region);
-    partner = outside.length ? randomItem(outside) : randomItem(JAPAN_PREFECTURES.filter((x) => x.id !== a.id));
-  }
-  const isTrue = partner.region === a.region;
-  return makeTrueFalseQuestion(
-    "jpRegion",
-    `${a.name}と${partner.name}は同じ地方にある`,
-    isTrue,
-    `${a.name}は${a.region}地方、${partner.name}は${partner.region}地方`,
-    { itemIds: [a.id, partner.id] }
-  );
-}
-
-function genJpRegionToCapital(forcedItem) {
-  const region = forcedItem ? forcedItem.region : pickJpRegionForQuestion();
-  const inRegion = JAPAN_PREFECTURES.filter((p) => p.region === region);
-  const correct = forcedItem && forcedItem.region === region ? forcedItem : randomItem(inRegion);
-  const wrongs = sampleExcluding(JAPAN_PREFECTURES, (p) => p.region === region, 3).map((p) => p.capital);
-  return makeChoiceQuestion("jpRegion", `次のうち${region}地方の都道府県庁所在地はどれ？`, correct.capital, wrongs, {
-    itemIds: [correct.id],
-  });
-}
-
-function genJpCapitalToRegion(forcedItem) {
-  const pref = forcedItem || pickBalancedJpItem();
-  const wrongs = sampleExcluding(JAPAN_REGIONS, (r) => r === pref.region, 3);
-  return makeChoiceQuestion("jpCapital", `都道府県庁所在地が${pref.capital}の都道府県は、何地方？`, pref.region, wrongs, {
-    itemIds: [pref.id],
-  });
-}
-
-function genJpPrefToCapital(forcedItem) {
-  const pref = forcedItem || pickBalancedJpItem();
-  const wrongs = pickMixedDecoys(JAPAN_PREFECTURES, pref, 3).map((p) => p.capital);
-  return makeChoiceQuestion("jpCapital", `${pref.name}の都道府県庁所在地は？`, pref.capital, wrongs, { itemIds: [pref.id] });
-}
-
-// 「県庁所在地→県」の逆読み。県名と県庁所在地がほぼ同じ県だと、
-// 問題文に答えがそのまま出てしまうので、そうした県は対象からはずす。
-function genJpCapitalToPref(forcedItem) {
-  const pref = forcedItem || pickBalancedNonObviousJpItem();
-  if (!pref || isJpCapitalObvious(pref)) return null;
-  const wrongs = pickMixedDecoys(JAPAN_PREFECTURES, pref, 3).map((p) => p.name);
-  return makeChoiceQuestion("jpCapital", `都道府県庁所在地が${pref.capital}なのはどこ？`, pref.name, wrongs, { itemIds: [pref.id] });
-}
-
-function genJpCapitalMaruBatsu(forcedItem) {
-  const pref = forcedItem || pickBalancedJpItem();
-  const isTrue = Math.random() < 0.5;
-  const shown = isTrue ? pref.capital : pickMaruBatsuDonor(JAPAN_PREFECTURES, pref).capital;
-  const statement = `${pref.name}の都道府県庁所在地は「${shown}」である`;
-  return makeTrueFalseQuestion("jpCapital", statement, isTrue, `${pref.name}の都道府県庁所在地は${pref.capital}`, {
-    itemIds: [pref.id],
-  });
-}
-
-function genJpCapitalNameMatch(forcedItem) {
-  const pref = forcedItem || pickBalancedJpItem();
-  const same = stripAreaSuffix(pref.name) === stripCitySuffix(pref.capital);
-  const statement = `${pref.name}の都道府県庁所在地は、都道府県名と同じ漢字で書く`;
-  return makeTrueFalseQuestion(
-    "jpCapital",
-    statement,
-    same,
-    same ? `${pref.name}の都道府県庁所在地は都道府県名と同じ` : `${pref.name}の都道府県庁所在地は${pref.capital}`,
-    { itemIds: [pref.id] }
-  );
-}
-
-// 「県と県庁所在地の組み合わせで、まちがっているものはどれ？」
-// 4組のうち1組だけ、県庁所在地をよそから借りてきて入れ替える。
-// 誤答候補・借りてくる県庁所在地とも、できるだけ同じ地方・地域から選ぶことで、
-// 「明らかに遠い県との入れ替え」ではなく、実際に紛らわしい組み合わせにする
-function genJpCapitalPairWrong(forcedItem) {
-  const wrongOne = forcedItem || pickBalancedJpItem();
-  const others = pickMixedDecoys(JAPAN_PREFECTURES, wrongOne, 3);
-  if (others.length < 3) return null;
-  const group = shuffle([wrongOne, ...others]);
-  const donorPool = JAPAN_PREFECTURES.filter((p) => !group.some((g) => g.id === p.id));
-  if (donorPool.length === 0) return null;
-  const donor = pickMaruBatsuDonor(donorPool, wrongOne);
-  const choices = group.map((p) => (p.id === wrongOne.id ? `${p.name} － ${donor.capital}` : `${p.name} － ${p.capital}`));
-  const correctLabel = `${wrongOne.name} － ${donor.capital}`;
-  const wrongLabels = choices.filter((c) => c !== correctLabel);
-  return makeChoiceQuestion("jpCapital", "都道府県と都道府県庁所在地の組み合わせで、まちがっているものはどれ？", correctLabel, wrongLabels, {
-    itemIds: [wrongOne.id],
-  });
-}
-
-// 「県と県庁所在地の正しい組み合わせはどれ？」
-// 4組のうち1組だけ正しい組み合わせにし、残り3組はよそから借りてきて入れ替える。
-// 正しい役は、県名と県庁所在地がほぼ同じ県だと見た目だけで分かってしまうため使わない。
-function genJpCapitalPairRight(forcedItem) {
-  const rightOne = forcedItem || pickBalancedNonObviousJpItem();
-  if (!rightOne || isJpCapitalObvious(rightOne)) return null;
-  const decoys = pickMixedDecoys(JAPAN_PREFECTURES, rightOne, 3);
-  if (decoys.length < 3) return null;
-  const donorPool = JAPAN_PREFECTURES.filter((p) => p.id !== rightOne.id && !decoys.some((d) => d.id === p.id));
-  const donors = pickDistinctDonors(donorPool, decoys);
-  if (!donors) return null;
-  const group = shuffle([rightOne, ...decoys]);
-  const choices = group.map((p) => {
-    if (p.id === rightOne.id) return `${p.name} － ${p.capital}`;
-    const idx = decoys.findIndex((d) => d.id === p.id);
-    return `${p.name} － ${donors[idx].capital}`;
-  });
-  const correctLabel = `${rightOne.name} － ${rightOne.capital}`;
-  const wrongLabels = choices.filter((c) => c !== correctLabel);
-  return makeChoiceQuestion("jpCapital", "都道府県と都道府県庁所在地の正しい組み合わせはどれ？", correctLabel, wrongLabels, {
-    itemIds: [rightOne.id],
-  });
-}
-
-// =========================================================
-// 世界地理：問題テンプレート
-// =========================================================
-function genWorldMapToName(forcedItem) {
-  const c = forcedItem || pickBalancedWorldItem();
-  const wrongs = pickMixedDecoys(WORLD_COUNTRIES, c, 3).map((x) => x.name);
-  return makeChoiceQuestion("worldMap", "地図で色がついている国はどこ？", c.name, wrongs, {
-    mapMode: "world",
-    mapHighlight: c.id,
-    itemIds: [c.id],
-  });
-}
-
-function genWorldMapClick(forcedItem) {
-  const c = forcedItem || pickBalancedWorldItem();
-  return {
-    category: "worldMap",
-    prompt: `「${c.name}」はどこ？ 地図をタップしよう`,
-    mapMode: "world",
-    mapHighlight: null,
-    mapClickable: true,
-    targetId: c.id,
-    flagPrompt: null,
-    isFlagChoices: false,
-    choices: null,
-    answerText: c.name,
-    itemIds: [c.id],
-  };
-}
-
-function genWorldMapToRegion(forcedItem) {
-  const c = forcedItem || pickBalancedWorldItem();
-  const wrongs = sampleExcluding(WORLD_REGIONS, (r) => r === c.region, 3);
-  return makeChoiceQuestion("worldMap", "地図で色がついている国は、どの地域？", c.region, wrongs, {
-    mapMode: "world",
-    mapHighlight: c.id,
-    itemIds: [c.id],
-  });
-}
-
-function genWorldMapToCapital(forcedItem) {
-  const c = forcedItem || pickBalancedWorldItem();
-  const wrongs = pickMixedDecoys(WORLD_COUNTRIES, c, 3).map((x) => x.capital);
-  return makeChoiceQuestion("worldMap", "地図で色がついている国の首都は？", c.capital, wrongs, {
-    mapMode: "world",
-    mapHighlight: c.id,
-    itemIds: [c.id],
-  });
-}
-
-function genWorldCountryToRegion(forcedItem) {
-  const c = forcedItem || pickBalancedWorldItem();
-  const wrongs = sampleExcluding(WORLD_REGIONS, (r) => r === c.region, 3);
-  return makeChoiceQuestion("worldMap", `${c.name}はどの地域？`, c.region, wrongs, { itemIds: [c.id] });
-}
-
-function genWorldRegionToCountry() {
-  const region = pickWorldRegionForQuestion();
-  const inRegion = WORLD_COUNTRIES.filter((c) => c.region === region);
-  const correct = randomItem(inRegion);
-  const wrongs = sampleExcluding(WORLD_COUNTRIES, (c) => c.region === region, 3).map((c) => c.name);
-  return makeChoiceQuestion("worldMap", `${region}にある国はどれ？`, correct.name, wrongs, { itemIds: [correct.id] });
-}
-
-function genWorldRegionNotIn() {
-  const region = pickWorldRegionForQuestion();
-  const inRegion = WORLD_COUNTRIES.filter((c) => c.region === region);
-  const outRegion = WORLD_COUNTRIES.filter((c) => c.region !== region);
-  if (inRegion.length < 3) return null;
-  const decoys = sampleN(inRegion, 3).map((c) => c.name);
-  const correct = randomItem(outRegion);
-  return makeChoiceQuestion("worldMap", `${region}に「ない」国はどれ？`, correct.name, decoys, { itemIds: [correct.id] });
-}
-
-function genWorldRegionMaruBatsu(forcedItem) {
-  const c = forcedItem || pickBalancedWorldItem();
-  const isTrue = Math.random() < 0.5;
-  const shown = isTrue ? c.region : randomItem(WORLD_REGIONS.filter((r) => r !== c.region));
-  const statement = `${c.name}は${shown}にある`;
-  return makeTrueFalseQuestion("worldMap", statement, isTrue, `${c.name}は${c.region}`, { itemIds: [c.id] });
-}
-
-function genWorldPairSameRegion() {
-  const a = pickBalancedWorldItem();
-  if (!a) return null;
-  const wantTrue = Math.random() < 0.5;
-  let partner;
-  if (wantTrue) {
-    const sameRegion = WORLD_COUNTRIES.filter((x) => x.id !== a.id && x.region === a.region);
-    partner = sameRegion.length ? randomItem(sameRegion) : randomItem(WORLD_COUNTRIES.filter((x) => x.id !== a.id));
-  } else {
-    const outside = WORLD_COUNTRIES.filter((x) => x.region !== a.region);
-    partner = outside.length ? randomItem(outside) : randomItem(WORLD_COUNTRIES.filter((x) => x.id !== a.id));
-  }
-  const isTrue = partner.region === a.region;
-  return makeTrueFalseQuestion(
-    "worldMap",
-    `${a.name}と${partner.name}は同じ地域にある`,
-    isTrue,
-    `${a.name}は${a.region}、${partner.name}は${partner.region}`,
-    { itemIds: [a.id, partner.id] }
-  );
-}
-
-function genWorldRegionToCapital(forcedItem) {
-  const region = forcedItem ? forcedItem.region : pickWorldRegionForQuestion();
-  const inRegion = WORLD_COUNTRIES.filter((c) => c.region === region);
-  const correct = forcedItem && forcedItem.region === region ? forcedItem : randomItem(inRegion);
-  const wrongs = sampleExcluding(WORLD_COUNTRIES, (c) => c.region === region, 3).map((c) => c.capital);
-  return makeChoiceQuestion("worldMap", `次のうち${region}にある国の首都はどれ？`, correct.capital, wrongs, {
-    itemIds: [correct.id],
-  });
-}
-
-function genWorldCapitalToRegion(forcedItem) {
-  const c = forcedItem || pickBalancedWorldItem();
-  const wrongs = sampleExcluding(WORLD_REGIONS, (r) => r === c.region, 3);
-  return makeChoiceQuestion("worldCapital", `首都が${c.capital}の国はどの地域？`, c.region, wrongs, { itemIds: [c.id] });
-}
-
-function genWorldFlagToRegion(forcedItem) {
-  const c = forcedItem || pickBalancedWorldItem();
-  const wrongs = sampleExcluding(WORLD_REGIONS, (r) => r === c.region, 3);
-  return makeChoiceQuestion("worldFlag", "この国旗の国は、どの地域にある？", c.region, wrongs, {
-    flagPrompt: c.id,
-    itemIds: [c.id],
-  });
-}
-
-// 国旗の選択肢は、表示のときに country id から実際のSVG画像を組み立てるため、
-// choice の label には id を入れ、answerText だけ読みやすい国名にしておく。
-function genWorldRegionToFlag() {
-  const region = pickWorldRegionForQuestion();
-  const inRegion = WORLD_COUNTRIES.filter((c) => c.region === region);
-  if (inRegion.length === 0) return null;
-  const correct = randomItem(inRegion);
-  const wrongFlags = sampleExcluding(WORLD_COUNTRIES, (c) => c.region === region, 3).map((c) => c.id);
-  return makeChoiceQuestion("worldMap", `次のうち${region}にある国の国旗はどれ？`, correct.id, wrongFlags, {
-    isFlagChoices: true,
-    itemIds: [correct.id],
-    answerText: correct.name,
-  });
-}
-
-function genWorldCountryToCapital(forcedItem) {
-  const c = forcedItem || pickBalancedWorldItem();
-  const wrongs = pickMixedDecoys(WORLD_COUNTRIES, c, 3).map((x) => x.capital);
-  return makeChoiceQuestion("worldCapital", `${c.name}の首都は？`, c.capital, wrongs, { itemIds: [c.id] });
-}
-
-// 「首都→国」の逆読み。国名と首都名がほぼ同じ国（このデータではシンガポールのみ）は、
-// 問題文に答えがそのまま出てしまうので対象からはずす。
-function genWorldCapitalToCountry(forcedItem) {
-  const c = forcedItem || pickBalancedNonObviousWorldItem();
-  if (!c || isWorldCapitalObvious(c)) return null;
-  const wrongs = pickMixedDecoys(WORLD_COUNTRIES, c, 3).map((x) => x.name);
-  return makeChoiceQuestion("worldCapital", `首都が${c.capital}なのはどこ？`, c.name, wrongs, { itemIds: [c.id] });
-}
-
-function genWorldCapitalMaruBatsu(forcedItem) {
-  const c = forcedItem || pickBalancedWorldItem();
-  const isTrue = Math.random() < 0.5;
-  const shown = isTrue ? c.capital : pickMaruBatsuDonor(WORLD_COUNTRIES, c).capital;
-  const statement = `${c.name}の首都は「${shown}」である`;
-  return makeTrueFalseQuestion("worldCapital", statement, isTrue, `${c.name}の首都は${c.capital}`, { itemIds: [c.id] });
-}
-
-// 「国と首都の組み合わせで、まちがっているものはどれ？」（考える）
-// 誤答候補・借りてくる首都とも、できるだけ同じ地域から選ぶことで、
-// 「明らかに遠い国との入れ替え」ではなく、実際に紛らわしい組み合わせにする
-function genWorldCapitalPairWrong(forcedItem) {
-  const wrongOne = forcedItem || pickBalancedWorldItem();
-  const others = pickMixedDecoys(WORLD_COUNTRIES, wrongOne, 3);
-  if (others.length < 3) return null;
-  const group = shuffle([wrongOne, ...others]);
-  const donorPool = WORLD_COUNTRIES.filter((x) => !group.some((g) => g.id === x.id));
-  if (donorPool.length === 0) return null;
-  const donor = pickMaruBatsuDonor(donorPool, wrongOne);
-  const choices = group.map((x) => (x.id === wrongOne.id ? `${x.name} － ${donor.capital}` : `${x.name} － ${x.capital}`));
-  const correctLabel = `${wrongOne.name} － ${donor.capital}`;
-  const wrongLabels = choices.filter((c) => c !== correctLabel);
-  return makeChoiceQuestion("worldCapital", "国と首都の組み合わせで、まちがっているものはどれ？", correctLabel, wrongLabels, {
-    itemIds: [wrongOne.id],
-  });
-}
-
-// 「国と首都の正しい組み合わせはどれ？」（考える）
-// 正しい役は、国名と首都名がほぼ同じ国だと見た目だけで分かってしまうため使わない。
-function genWorldCapitalPairRight(forcedItem) {
-  const rightOne = forcedItem || pickBalancedNonObviousWorldItem();
-  if (!rightOne || isWorldCapitalObvious(rightOne)) return null;
-  const decoys = pickMixedDecoys(WORLD_COUNTRIES, rightOne, 3);
-  if (decoys.length < 3) return null;
-  const donorPool = WORLD_COUNTRIES.filter((x) => x.id !== rightOne.id && !decoys.some((d) => d.id === x.id));
-  const donors = pickDistinctDonors(donorPool, decoys);
-  if (!donors) return null;
-  const group = shuffle([rightOne, ...decoys]);
-  const choices = group.map((x) => {
-    if (x.id === rightOne.id) return `${x.name} － ${x.capital}`;
-    const idx = decoys.findIndex((d) => d.id === x.id);
-    return `${x.name} － ${donors[idx].capital}`;
-  });
-  const correctLabel = `${rightOne.name} － ${rightOne.capital}`;
-  const wrongLabels = choices.filter((c) => c !== correctLabel);
-  return makeChoiceQuestion("worldCapital", "国と首都の正しい組み合わせはどれ？", correctLabel, wrongLabels, {
-    itemIds: [rightOne.id],
-  });
-}
-
-function genWorldFlagToCountry(forcedItem) {
-  const c = forcedItem || pickBalancedWorldItem();
-  const wrongs = pickMixedDecoys(WORLD_COUNTRIES, c, 3).map((x) => x.name);
-  return makeChoiceQuestion("worldFlag", "この国旗はどこの国？", c.name, wrongs, { flagPrompt: c.id, itemIds: [c.id] });
-}
-
-function genWorldFlagCapitalMaruBatsu(forcedItem) {
-  const c = forcedItem || pickBalancedWorldItem();
-  const isTrue = Math.random() < 0.5;
-  const shown = isTrue ? c.capital : pickMaruBatsuDonor(WORLD_COUNTRIES, c).capital;
-  const statement = `この国旗の国の首都は「${shown}」である`;
-  return makeTrueFalseQuestion("worldFlag", statement, isTrue, `${c.name}の首都は${c.capital}`, {
-    flagPrompt: c.id,
-    itemIds: [c.id],
-  });
-}
-
-function genWorldCountryToFlag(forcedItem) {
-  const c = forcedItem || pickBalancedWorldItem();
-  const wrongFlags = pickMixedDecoys(WORLD_COUNTRIES, c, 3).map((x) => x.id);
-  return makeChoiceQuestion("worldFlag", `${c.name}の国旗はどれ？`, c.id, wrongFlags, {
-    isFlagChoices: true,
-    itemIds: [c.id],
-    answerText: c.name,
-  });
-}
-
-// 表示する国旗（flagPrompt）は常にcの本物の国旗にして、文の中では国名だけを
-// 入れ替える（他のworldFlag系テンプレートと同じ考え方。絵文字を文に埋め込むと
-// 環境によって表示が崩れるため、国旗は画像として上に表示する）
-function genWorldFlagMaruBatsu(forcedItem) {
-  const c = forcedItem || pickBalancedWorldItem();
-  const isTrue = Math.random() < 0.5;
-  const shownName = isTrue ? c.name : randomItem(WORLD_COUNTRIES.filter((x) => x.id !== c.id)).name;
-  const statement = `この国旗は${shownName}の国旗である`;
-  return makeTrueFalseQuestion("worldFlag", statement, isTrue, `${c.name}の国旗`, {
-    flagPrompt: c.id,
-    itemIds: [c.id],
-  });
-}
-
-// =========================================================
-// テンプレート一覧（日本18種類＋世界22種類 = 40種類）
-// level: easy / medium / hard
-// forceable: true なら「この県・国について出して」と指定できる
-//            （まちがえた問題の再出題・復習で使う）
-// requires: この問題を出すために必要な出題範囲チェック
-// factKind: 「わからない」を押したときに出す一言や、まちがえた問題の復習で
-//           「同じ種類の知識」を出し分けるための印（location/region/capital/flag）。
-//           location＝地図上の位置そのもの（何地方かではなく、位置を当てる問題）
-// =========================================================
-const TEMPLATES = [
-  // ---- 日本地理 ----
-  { name: "jpMapToName", kind: "jp", category: "jpMap", level: "easy", forceable: true, requires: ["jpMap"], factKind: "location", fn: genJpMapToName },
-  { name: "jpNameToMap", kind: "jp", category: "jpMap", level: "easy", forceable: true, requires: ["jpMap"], factKind: "location", fn: genJpNameToMap },
-  { name: "jpMapToRegion", kind: "jp", category: "jpMap", level: "medium", forceable: true, requires: ["jpMap", "jpRegion"], factKind: "region", fn: genJpMapToRegion },
-  { name: "jpMapToCapital", kind: "jp", category: "jpMap", level: "medium", forceable: true, requires: ["jpMap", "jpCapital"], factKind: "capital", fn: genJpMapToCapital },
-  { name: "jpMapCapitalCheck", kind: "jp", category: "jpMap", level: "hard", forceable: true, requires: ["jpMap", "jpCapital"], factKind: "capital", fn: genJpMapCapitalCheck },
-  { name: "jpPrefToRegion", kind: "jp", category: "jpRegion", level: "easy", forceable: true, requires: ["jpRegion"], factKind: "region", fn: genJpPrefToRegion },
-  { name: "jpRegionToPref", kind: "jp", category: "jpRegion", level: "easy", forceable: false, requires: ["jpRegion"], factKind: "region", fn: genJpRegionToPref },
-  { name: "jpRegionNotIn", kind: "jp", category: "jpRegion", level: "medium", forceable: false, requires: ["jpRegion"], factKind: "region", fn: genJpRegionNotIn },
-  { name: "jpRegionMaruBatsu", kind: "jp", category: "jpRegion", level: "easy", forceable: true, requires: ["jpRegion"], factKind: "region", fn: genJpRegionMaruBatsu },
-  { name: "jpPairSameRegion", kind: "jp", category: "jpRegion", level: "medium", forceable: false, requires: ["jpRegion"], factKind: "region", fn: genJpPairSameRegion },
-  { name: "jpRegionToCapital", kind: "jp", category: "jpRegion", level: "hard", forceable: true, requires: ["jpRegion", "jpCapital"], factKind: "capital", fn: genJpRegionToCapital },
-  { name: "jpCapitalToRegion", kind: "jp", category: "jpCapital", level: "hard", forceable: true, requires: ["jpCapital", "jpRegion"], factKind: "region", fn: genJpCapitalToRegion },
-  { name: "jpPrefToCapital", kind: "jp", category: "jpCapital", level: "easy", forceable: true, requires: ["jpCapital"], factKind: "capital", fn: genJpPrefToCapital },
-  { name: "jpCapitalToPref", kind: "jp", category: "jpCapital", level: "medium", forceable: true, requires: ["jpCapital"], factKind: "capital", fn: genJpCapitalToPref },
-  { name: "jpCapitalMaruBatsu", kind: "jp", category: "jpCapital", level: "easy", forceable: true, requires: ["jpCapital"], factKind: "capital", fn: genJpCapitalMaruBatsu },
-  { name: "jpCapitalNameMatch", kind: "jp", category: "jpCapital", level: "easy", forceable: true, requires: ["jpCapital"], factKind: "capital", fn: genJpCapitalNameMatch },
-  { name: "jpCapitalPairWrong", kind: "jp", category: "jpCapital", level: "hard", forceable: true, requires: ["jpCapital"], factKind: "capital", fn: genJpCapitalPairWrong },
-  { name: "jpCapitalPairRight", kind: "jp", category: "jpCapital", level: "hard", forceable: true, requires: ["jpCapital"], factKind: "capital", fn: genJpCapitalPairRight },
-
-  // ---- 世界地理 ----
-  { name: "worldMapToName", kind: "world", category: "worldMap", level: "easy", forceable: true, requires: ["worldMap"], factKind: "location", fn: genWorldMapToName },
-  { name: "worldMapClick", kind: "world", category: "worldMap", level: "easy", forceable: true, requires: ["worldMap"], factKind: "location", fn: genWorldMapClick },
-  { name: "worldMapToRegion", kind: "world", category: "worldMap", level: "medium", forceable: true, requires: ["worldMap"], factKind: "region", fn: genWorldMapToRegion },
-  { name: "worldMapToCapital", kind: "world", category: "worldMap", level: "medium", forceable: true, requires: ["worldMap", "worldCapital"], factKind: "capital", fn: genWorldMapToCapital },
-  { name: "worldCountryToRegion", kind: "world", category: "worldMap", level: "easy", forceable: true, requires: ["worldMap"], factKind: "region", fn: genWorldCountryToRegion },
-  { name: "worldRegionToCountry", kind: "world", category: "worldMap", level: "easy", forceable: false, requires: ["worldMap"], factKind: "region", fn: genWorldRegionToCountry },
-  { name: "worldRegionNotIn", kind: "world", category: "worldMap", level: "medium", forceable: false, requires: ["worldMap"], factKind: "region", fn: genWorldRegionNotIn },
-  { name: "worldRegionMaruBatsu", kind: "world", category: "worldMap", level: "easy", forceable: true, requires: ["worldMap"], factKind: "region", fn: genWorldRegionMaruBatsu },
-  { name: "worldPairSameRegion", kind: "world", category: "worldMap", level: "medium", forceable: false, requires: ["worldMap"], factKind: "region", fn: genWorldPairSameRegion },
-  { name: "worldRegionToCapital", kind: "world", category: "worldMap", level: "hard", forceable: true, requires: ["worldMap", "worldCapital"], factKind: "capital", fn: genWorldRegionToCapital },
-  { name: "worldCapitalToRegion", kind: "world", category: "worldCapital", level: "hard", forceable: true, requires: ["worldCapital", "worldMap"], factKind: "region", fn: genWorldCapitalToRegion },
-  { name: "worldFlagToRegion", kind: "world", category: "worldFlag", level: "hard", forceable: true, requires: ["worldFlag", "worldMap"], factKind: "region", fn: genWorldFlagToRegion },
-  { name: "worldRegionToFlag", kind: "world", category: "worldMap", level: "hard", forceable: false, requires: ["worldMap", "worldFlag"], factKind: "flag", fn: genWorldRegionToFlag },
-  { name: "worldCountryToCapital", kind: "world", category: "worldCapital", level: "easy", forceable: true, requires: ["worldCapital"], factKind: "capital", fn: genWorldCountryToCapital },
-  { name: "worldCapitalToCountry", kind: "world", category: "worldCapital", level: "medium", forceable: true, requires: ["worldCapital"], factKind: "capital", fn: genWorldCapitalToCountry },
-  { name: "worldCapitalMaruBatsu", kind: "world", category: "worldCapital", level: "easy", forceable: true, requires: ["worldCapital"], factKind: "capital", fn: genWorldCapitalMaruBatsu },
-  { name: "worldCapitalPairWrong", kind: "world", category: "worldCapital", level: "hard", forceable: true, requires: ["worldCapital"], factKind: "capital", fn: genWorldCapitalPairWrong },
-  { name: "worldCapitalPairRight", kind: "world", category: "worldCapital", level: "hard", forceable: true, requires: ["worldCapital"], factKind: "capital", fn: genWorldCapitalPairRight },
-  { name: "worldFlagToCountry", kind: "world", category: "worldFlag", level: "easy", forceable: true, requires: ["worldFlag"], factKind: "flag", fn: genWorldFlagToCountry },
-  { name: "worldFlagCapitalMaruBatsu", kind: "world", category: "worldFlag", level: "medium", forceable: true, requires: ["worldFlag", "worldCapital"], factKind: "capital", fn: genWorldFlagCapitalMaruBatsu },
-  { name: "worldCountryToFlag", kind: "world", category: "worldFlag", level: "easy", forceable: true, requires: ["worldFlag"], factKind: "flag", fn: genWorldCountryToFlag },
-  { name: "worldFlagMaruBatsu", kind: "world", category: "worldFlag", level: "easy", forceable: true, requires: ["worldFlag"], factKind: "flag", fn: genWorldFlagMaruBatsu },
+let questions = [];
+let currentIndex = 0;
+let answers = [];
+let locked = false;
+let courseMode = "10";
+let lastCourseConfig = null;
+let retryKeys = new Set();
+let worksheetVersion = 0;
+let printMode = "japan";
+const selectedWorldPrintRegions = new Set(["世界全体"]);
+const JAPAN_PRINT_REGION_COLORS = [
+  { fill: "#f7bd78", stroke: "#9b4b16" },
+  { fill: "#8fd3c7", stroke: "#176b63" },
+  { fill: "#a9c4eb", stroke: "#355f9b" },
 ];
+const PRINT_REGION_MARKS = ["A", "B", "C"];
 
-// ---------- 地図の描画（SVGを1回だけ組み立てて使い回す） ----------
-let japanMapRoot = null;
-let worldMapRoot = null;
-
-// SVGの中身が実際に読み込めているか確認してから使う（読み込み失敗時はnullを返す）
-function ensureJapanMap() {
-  if (japanMapRoot === null && typeof JAPAN_MAP_SVG === "string" && JAPAN_MAP_SVG.length > 0) {
-    const wrapper = document.createElement("div");
-    wrapper.innerHTML = JAPAN_MAP_SVG;
-    const svg = wrapper.firstElementChild;
-    if (svg && svg.querySelector("path")) japanMapRoot = svg;
+function shuffle(items) {
+  const copy = [...items];
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
   }
-  return japanMapRoot;
+  return copy;
 }
-function ensureWorldMap() {
-  if (worldMapRoot === null && typeof WORLD_MAP_SVG === "string" && WORLD_MAP_SVG.length > 0) {
-    const wrapper = document.createElement("div");
-    wrapper.innerHTML = WORLD_MAP_SVG;
-    const svg = wrapper.firstElementChild;
-    if (svg && svg.querySelector("path")) worldMapRoot = svg;
+
+function sample(items, count = 1) {
+  return shuffle(items).slice(0, count);
+}
+
+function naturalChoices(answer, preferredCandidates, allCandidates, size = 4) {
+  const preferred = shuffle([...new Set(preferredCandidates)].filter((item) => item !== answer));
+  const fallback = shuffle([...new Set(allCandidates)].filter((item) => item !== answer && !preferred.includes(item)));
+  return shuffle([answer, ...preferred, ...fallback].slice(0, size));
+}
+
+function confusableRegions(region, table, allRegions) {
+  return [...new Set([...(table[region] || []), ...allRegions.filter((item) => item !== region)])];
+}
+
+function confusableEntities(entity, entities, regionTable, count = 3) {
+  const preferredRegions = regionTable[entity.region] || [];
+  const preferred = entities.filter((item) => item !== entity && (item.region === entity.region || preferredRegions.includes(item.region)));
+  const fallback = entities.filter((item) => item !== entity && !preferred.includes(item));
+  return [...sample(preferred, count), ...sample(fallback, count)].slice(0, count);
+}
+
+function mismatchedPairs(entity, entities, labelKey, valueKey, regionTable, count = 3) {
+  const pairEntities = confusableEntities(entity, entities, regionTable, count);
+  const usedValues = new Set();
+  return pairEntities.map((item) => {
+    const donors = shuffle(entities.filter((candidate) => (
+      candidate[valueKey] !== item[valueKey]
+      && candidate[valueKey] !== entity[valueKey]
+      && !usedValues.has(candidate[valueKey])
+    )));
+    const donor = donors[0] || entities.find((candidate) => candidate[valueKey] !== item[valueKey]);
+    usedValues.add(donor[valueKey]);
+    return `${item[labelKey]} ― ${donor[valueKey]}`;
+  });
+}
+
+function paintJapanMap(container, codes, color = "#f4a261") {
+  container.querySelectorAll("[data-code]").forEach((element) => {
+    const selected = codes.map(String).includes(String(element.dataset.code));
+    element.style.setProperty("fill", selected ? color : "#f7fafb", "important");
+    element.style.setProperty("stroke", selected ? "#8f4516" : "#607783", "important");
+    element.style.setProperty("stroke-width", selected ? "7" : "4", "important");
+  });
+}
+
+function paintJapanPrintRegions(container, selectedPrefectures, regions) {
+  const colorByRegion = new Map(regions.map((region, index) => [region, JAPAN_PRINT_REGION_COLORS[index]]));
+  const selectedCodes = new Set(selectedPrefectures.map((prefecture) => prefecture.code));
+  container.querySelectorAll("[data-code]").forEach((element) => {
+    const prefecture = PREFECTURES.find((item) => String(item.code) === String(element.dataset.code));
+    const color = prefecture && selectedCodes.has(prefecture.code) ? colorByRegion.get(prefecture.region) : null;
+    element.style.setProperty("fill", color?.fill || "#f7fafb", "important");
+    element.style.setProperty("stroke", color?.stroke || "#607783", "important");
+    element.style.setProperty("stroke-width", color ? "6" : "4", "important");
+    element.style.setProperty("vector-effect", "non-scaling-stroke", "important");
+  });
+}
+
+const DIFFICULTY_LABELS = { easy: "やさしい問題", medium: "少し考える問題", think: "考える問題" };
+
+function q({ id, scope, type, prompt, answer, choices = [], explanation, visual = null, difficulty = "easy", knowledgeKey, templateId, entityRegion, interaction = "choice" }) {
+  return {
+    id, scope, type, prompt, answer: String(answer), choices: choices.map(String), explanation, visual,
+    difficulty, level: DIFFICULTY_LABELS[difficulty], knowledgeKey, templateId, entityRegion, interaction,
+  };
+}
+
+function makeQuestion(template, entity, index) {
+  const isJapan = template.kind.startsWith("jp-");
+  const knowledgeKey = isJapan ? `jp:${entity.code}` : `world:${entity.id}`;
+  const base = {
+    id: `${template.id}-${isJapan ? entity.code : entity.id}`,
+    scope: template.scope,
+    type: template.type,
+    difficulty: template.difficulty,
+    knowledgeKey,
+    templateId: template.id,
+    entityRegion: entity.region,
+  };
+
+  if (isJapan) {
+    const names = PREFECTURES.map((item) => item.name);
+    const capitals = PREFECTURES.map((item) => item.capital);
+    const codes = PREFECTURES.map((item) => String(item.code));
+    const same = PREFECTURES.filter((item) => item.region === entity.region && item.code !== entity.code);
+    const other = PREFECTURES.filter((item) => item.region !== entity.region);
+    const nearbyRegions = JAPAN_REGION_CONFUSABLES[entity.region] || [];
+    const nearby = PREFECTURES.filter((item) => nearbyRegions.includes(item.region));
+    const preferredNames = [...same, ...nearby].map((item) => item.name);
+    const preferredCapitals = [...same, ...nearby].map((item) => item.capital);
+    const outsider = sample(nearby.length ? nearby : other)[0];
+    const wrongRegion = sample(nearbyRegions.length ? nearbyRegions : JAPAN_REGIONS.filter((region) => region !== entity.region))[0];
+    const wrongCapital = sample((same.length ? same : other).filter((item) => item.capital !== entity.capital))[0].capital;
+    const trueStatement = Math.random() < 0.55;
+    const shownRegion = trueStatement ? entity.region : wrongRegion;
+    const shownCapital = trueStatement ? entity.capital : wrongCapital;
+    const nearbyCodes = PREFECTURES
+      .filter((item) => item.code !== entity.code && (item.region === entity.region || Math.abs(item.code - entity.code) <= 5))
+      .map((item) => String(item.code));
+
+    switch (template.kind) {
+      case "jp-highlight-name": return q({ ...base, prompt: "地図で色がついている都道府県は？", answer: entity.name, choices: naturalChoices(entity.name, preferredNames, names), explanation: `${entity.name}は${entity.region}地方。`, visual: { kind: "japanHighlight", codes: [entity.code] } });
+      case "jp-click-location": return q({ ...base, prompt: `${entity.name}を地図で押してください。`, answer: entity.name, explanation: `${entity.name}は${entity.region}地方。`, visual: { kind: "japanClick", region: entity.region }, interaction: "japanMapClick" });
+      case "jp-number-name": return q({ ...base, prompt: `地図の「${entity.code}」はどの都道府県？`, answer: entity.name, choices: naturalChoices(entity.name, preferredNames, names), explanation: `${entity.code}番は${entity.name}。`, visual: { kind: "japanNumbered" } });
+      case "jp-name-number": return q({ ...base, prompt: `${entity.name}は地図の何番？`, answer: entity.code, choices: naturalChoices(String(entity.code), nearbyCodes, codes), explanation: `${entity.name}は${entity.code}番。`, visual: { kind: "japanNumbered" } });
+      case "jp-region-name": return q({ ...base, prompt: `${entity.name}は何地方？`, answer: entity.region, choices: naturalChoices(entity.region, nearbyRegions, JAPAN_REGIONS), explanation: `${entity.name}は${entity.region}地方。` });
+      case "jp-region-member": return q({ ...base, prompt: `${entity.region}地方にある都道府県はどれ？`, answer: entity.name, choices: naturalChoices(entity.name, nearby.map((item) => item.name), other.map((item) => item.name)), explanation: `${entity.name}は${entity.region}地方。` });
+      case "jp-region-outsider": {
+        if (same.length < 3) return null;
+        return q({ ...base, prompt: `${entity.region}地方に「ない」都道府県はどれ？`, answer: outsider.name, choices: shuffle([outsider.name, ...sample(same.map((item) => item.name), 3)]), explanation: `${outsider.name}は${outsider.region}地方。` });
+      }
+      case "jp-highlight-region": return q({ ...base, prompt: `地図で色がついている${entity.name}は何地方？`, answer: entity.region, choices: naturalChoices(entity.region, nearbyRegions, JAPAN_REGIONS), explanation: `${entity.name}は${entity.region}地方。`, visual: { kind: "japanHighlight", codes: [entity.code] } });
+      case "jp-region-truefalse": return q({ ...base, prompt: `「${entity.name}は${shownRegion}地方にある」`, answer: trueStatement ? "○" : "×", choices: ["○", "×"], explanation: `${entity.name}は${entity.region}地方。` });
+      case "jp-region-pair": {
+        const pairIsSame = same.length > 0 && Math.random() < 0.5;
+        const partner = pairIsSame ? sample(same)[0] : outsider;
+        return q({ ...base, prompt: `「${entity.name}と${partner.name}は同じ地方にある」`, answer: pairIsSame ? "○" : "×", choices: ["○", "×"], explanation: `${entity.name}は${entity.region}、${partner.name}は${partner.region}。` });
+      }
+      case "jp-capital-forward": return q({ ...base, prompt: `${entity.name}の都道府県庁所在地は？`, answer: entity.capital, choices: naturalChoices(entity.capital, preferredCapitals, capitals), explanation: `${entity.name}―${entity.capital}。` });
+      case "jp-capital-reverse": return q({ ...base, prompt: `${entity.capital}は、どの都道府県の庁所在地？`, answer: entity.name, choices: naturalChoices(entity.name, preferredNames, names), explanation: `${entity.capital}は${entity.name}。` });
+      case "jp-capital-truefalse": return q({ ...base, prompt: `「${entity.name}の都道府県庁所在地は${shownCapital}」`, answer: trueStatement ? "○" : "×", choices: ["○", "×"], explanation: `${entity.name}―${entity.capital}。` });
+      case "jp-capital-pair": {
+        const distractors = mismatchedPairs(entity, PREFECTURES, "name", "capital", JAPAN_REGION_CONFUSABLES);
+        const answer = `${entity.name} ― ${entity.capital}`;
+        return q({ ...base, prompt: "都道府県と庁所在地の正しい組み合わせは？", answer, choices: shuffle([answer, ...distractors]), explanation: answer });
+      }
+      default: return null;
+    }
   }
-  return worldMapRoot;
+
+  const names = COUNTRIES.map((item) => item.name);
+  const capitals = COUNTRIES.filter((item) => item.capitalQuiz !== false).map((item) => item.capital);
+  const flags = COUNTRIES.map((item) => item.flag);
+  const sameRegion = COUNTRIES.filter((item) => item.region === entity.region && item.id !== entity.id && item.capitalQuiz !== false);
+  const sameRegionAll = COUNTRIES.filter((item) => item.region === entity.region && item.id !== entity.id);
+  const nearbyRegions = WORLD_REGION_CONFUSABLES[entity.region] || [];
+  const nearbyCountries = COUNTRIES.filter((item) => nearbyRegions.includes(item.region));
+  const preferredNames = [...sameRegionAll, ...nearbyCountries].map((item) => item.name);
+  const preferredCapitals = [...sameRegion, ...nearbyCountries.filter((item) => item.capitalQuiz !== false)].map((item) => item.capital);
+  const preferredFlags = [...sameRegionAll, ...nearbyCountries].map((item) => item.flag);
+  const sameRegionMapCountries = sameRegionAll.filter((item) => item.mapQuiz !== false);
+  const wrongCountry = sample(sameRegionMapCountries.length ? sameRegionMapCountries : COUNTRIES.filter((item) => item.id !== entity.id && item.mapQuiz !== false))[0];
+  const wrongRegion = sample(nearbyRegions.length ? nearbyRegions : WORLD_REGIONS.filter((region) => region !== entity.region))[0];
+  const wrongCapital = sample(sameRegion.length ? sameRegion : COUNTRIES.filter((item) => item.id !== entity.id && item.capitalQuiz !== false))[0].capital;
+  const trueStatement = Math.random() < 0.55;
+
+  switch (template.kind) {
+    case "world-highlight-name": return q({ ...base, prompt: "地図で色がついている国は？", answer: entity.name, choices: naturalChoices(entity.name, preferredNames, names), explanation: `${entity.name}は${entity.region}。`, visual: { kind: "world", mapId: entity.mapId } });
+    case "world-click-location": return q({ ...base, prompt: `${entity.name}を地図で押してください。`, answer: entity.name, explanation: `${entity.name}は${entity.region}。`, visual: { kind: "worldClick", region: entity.region, mapId: entity.mapId }, interaction: "worldMapClick" });
+    case "world-location-truefalse": return q({ ...base, prompt: `「色がついている位置は${entity.name}」`, answer: trueStatement ? "○" : "×", choices: ["○", "×"], explanation: `色がついているのは${trueStatement ? entity.name : wrongCountry.name}。`, visual: { kind: "world", mapId: trueStatement ? entity.mapId : wrongCountry.mapId } });
+    case "world-capital-forward": return q({ ...base, prompt: `${entity.name}の首都は？`, answer: entity.capital, choices: naturalChoices(entity.capital, preferredCapitals, capitals), explanation: `${entity.name}―${entity.capital}。` });
+    case "world-capital-reverse": return q({ ...base, prompt: `${entity.capital}は、どの国の首都？`, answer: entity.name, choices: naturalChoices(entity.name, preferredNames, names), explanation: `${entity.capital}は${entity.name}の首都。` });
+    case "world-region-forward": return q({ ...base, prompt: `${entity.name}はどの地域？`, answer: entity.region, choices: naturalChoices(entity.region, nearbyRegions, WORLD_REGIONS), explanation: `${entity.name}は${entity.region}。` });
+    case "world-region-truefalse": return q({ ...base, prompt: `「${entity.name}は${trueStatement ? entity.region : wrongRegion}にある」`, answer: trueStatement ? "○" : "×", choices: ["○", "×"], explanation: `${entity.name}は${entity.region}。` });
+    case "world-capital-truefalse": return q({ ...base, prompt: `「${entity.name}の首都は${trueStatement ? entity.capital : wrongCapital}」`, answer: trueStatement ? "○" : "×", choices: ["○", "×"], explanation: `${entity.name}―${entity.capital}。` });
+    case "world-capital-region": return q({ ...base, prompt: `${entity.capital}を首都とする国は、どの地域？`, answer: entity.region, choices: naturalChoices(entity.region, nearbyRegions, WORLD_REGIONS), explanation: `${entity.capital}は${entity.name}の首都。${entity.name}は${entity.region}。` });
+    case "world-flag-name": return q({ ...base, prompt: "この国旗の国は？", answer: entity.name, choices: naturalChoices(entity.name, preferredNames, names), explanation: `${entity.flag}は${entity.name}。`, visual: { kind: "flag", value: entity.flag } });
+    case "world-name-flag": return q({ ...base, prompt: `${entity.name}の国旗はどれ？`, answer: entity.flag, choices: naturalChoices(entity.flag, preferredFlags, flags), explanation: `${entity.name}の国旗は${entity.flag}。` });
+    case "world-flag-capital": return q({ ...base, prompt: "この国旗の国の首都は？", answer: entity.capital, choices: naturalChoices(entity.capital, preferredCapitals, capitals), explanation: `${entity.flag}は${entity.name}。首都は${entity.capital}。`, visual: { kind: "flag", value: entity.flag } });
+    default: return null;
+  }
 }
 
-// 問題に出てくる県・国の「地方・地域」に合わせて、地図の表示範囲を拡大する。
-// 出題範囲を地方・地域で絞っているときは、問題ごとに拡大範囲が変わって
-// 見づらくならないよう、選んだ地方・地域をまとめた範囲を毎回使う。
-function pickQuizViewBox(q) {
-  const table = q.kind === "jp" ? JAPAN_REGION_VIEW : WORLD_REGION_VIEW;
-  const fullKey = q.kind === "jp" ? "全国" : "全世界";
-  const selectedRegions = q.kind === "jp" ? state.filters.jpRegions : state.filters.worldRegions;
-  if (selectedRegions && selectedRegions.length) return unionRegionViewBox(table, fullKey, selectedRegions);
-
-  if (q.mapClickable || !q.itemIds || q.itemIds.length === 0) return table[fullKey];
-  const pool = q.kind === "jp" ? JAPAN_PREFECTURES : WORLD_COUNTRIES;
-  const item = pool.find((x) => x.id === q.itemIds[0]);
-  if (!item) return table[fullKey];
-  return table[item.region] || table[fullKey];
+function buildQuestionsForScope(scope) {
+  return QUIZ_TEMPLATES.filter((template) => template.scope === scope).flatMap((template) => {
+    const isJapan = template.kind.startsWith("jp-");
+    let entities = isJapan ? PREFECTURES : COUNTRIES;
+    if (!isJapan && template.kind.includes("world-") && (template.kind.includes("highlight") || template.kind.includes("click") || template.kind.includes("location"))) {
+      entities = entities.filter((country) => country.mapQuiz !== false);
+    }
+    if (!isJapan && (template.kind.includes("capital") || template.kind === "world-flag-capital")) {
+      entities = entities.filter((country) => country.capitalQuiz !== false);
+    }
+    return entities.map((entity, index) => makeQuestion(template, entity, index)).filter(Boolean);
+  });
 }
 
-function renderMap(container, q) {
-  const svg = q.mapMode === "japan" ? ensureJapanMap() : ensureWorldMap();
-  container.innerHTML = "";
+function filteredQuestionPool(scopes, filters = {}) {
+  return scopes.flatMap(buildQuestionsForScope).filter((question) => {
+    if (filters.difficulty && question.difficulty !== filters.difficulty) return false;
+    if (question.knowledgeKey.startsWith("jp:") && filters.japanRegion && question.entityRegion !== filters.japanRegion) return false;
+    if (question.knowledgeKey.startsWith("world:") && filters.worldRegion && question.entityRegion !== filters.worldRegion) return false;
+    return true;
+  });
+}
 
-  if (!svg) {
-    const msg = document.createElement("p");
-    msg.className = "map-error";
-    msg.textContent = "地図を読み込めませんでした。ページを再読み込みしてください。";
-    container.appendChild(msg);
-    container.classList.remove("hidden");
-    state.currentMapSvg = null;
+function buildBalancedCourse(scopes, count, filters = {}, { allowRepeats = false } = {}) {
+  const pool = filteredQuestionPool(scopes, filters);
+  if (!pool.length) return [];
+  const targetCount = allowRepeats ? count : Math.min(count, pool.length);
+  const easyCount = filters.difficulty ? targetCount : Math.round(targetCount * 0.6);
+  const mediumCount = filters.difficulty ? 0 : Math.round(targetCount * 0.3);
+  const thinkCount = Math.max(0, targetCount - easyCount - mediumCount);
+  const sequence = filters.difficulty
+    ? Array(targetCount).fill(filters.difficulty)
+    : shuffle([...Array(easyCount).fill("easy"), ...Array(mediumCount).fill("medium"), ...Array(thinkCount).fill("think")]);
+  const selected = [];
+  const usedIds = new Set();
+  const usedKnowledge = new Set();
+  const scopeCounts = Object.fromEntries(scopes.map((scope) => [scope, 0]));
+  const templateCounts = {};
+
+  sequence.forEach((difficulty) => {
+    let candidates = pool.filter((question) => question.difficulty === difficulty && !usedIds.has(question.id));
+    if (!candidates.length) candidates = pool.filter((question) => !usedIds.has(question.id));
+    if (!candidates.length) candidates = pool;
+    const newKnowledge = candidates.filter((question) => !usedKnowledge.has(question.knowledgeKey));
+    if (newKnowledge.length) candidates = newKnowledge;
+    const recent = selected.slice(-3);
+    const varied = candidates.filter((question) => !recent.some((previous) => question.templateId === previous.templateId || question.knowledgeKey === previous.knowledgeKey));
+    if (varied.length) candidates = varied;
+    const minScopeCount = Math.min(...new Set(candidates.map((question) => scopeCounts[question.scope] || 0)));
+    candidates = candidates.filter((question) => (scopeCounts[question.scope] || 0) === minScopeCount);
+    const minTemplateCount = Math.min(...new Set(candidates.map((question) => templateCounts[question.templateId] || 0)));
+    candidates = candidates.filter((question) => (templateCounts[question.templateId] || 0) === minTemplateCount);
+    const chosen = sample(candidates)[0];
+    selected.push(chosen);
+    usedIds.add(chosen.id);
+    usedKnowledge.add(chosen.knowledgeKey);
+    scopeCounts[chosen.scope] = (scopeCounts[chosen.scope] || 0) + 1;
+    templateCounts[chosen.templateId] = (templateCounts[chosen.templateId] || 0) + 1;
+  });
+  return selected;
+}
+
+function getWrongBank() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"); }
+  catch { return []; }
+}
+
+function saveWrongBank(bank) {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(bank.slice(-100))); }
+  catch { /* 保存が使えない端末でも、クイズ自体は続けられます。 */ }
+  updateReviewCount();
+}
+
+function updateWrongBank(question, isCorrect) {
+  const bank = getWrongBank().filter((item) => item.knowledgeKey !== question.knowledgeKey);
+  if (!isCorrect) bank.push(question);
+  saveWrongBank(bank);
+}
+
+function updateReviewCount() {
+  const count = getWrongBank().length;
+  $("#review-count").textContent = `保存 ${count}問`;
+  $("#quick-review-count").textContent = `保存 ${count}問`;
+}
+
+function selectedScopes() {
+  return [...document.querySelectorAll('input[name="scope"]:checked')].map((input) => input.value);
+}
+
+function selectedFilters() {
+  return {
+    japanRegion: $("#japan-region-filter").value,
+    worldRegion: $("#world-region-filter").value,
+    difficulty: $("#difficulty-filter").value,
+  };
+}
+
+function startCourse(course, scopes, filters = {}, messageElement = $("#setup-message")) {
+  messageElement.textContent = "";
+  const courseNote = $("#course-note");
+  courseNote.textContent = "";
+  courseNote.classList.add("hidden");
+  if (!scopes.length) {
+    messageElement.textContent = "出題する分野を1つ以上選んでください。";
     return;
   }
-
-  svg.querySelectorAll("path").forEach((p) => {
-    p.classList.remove("highlight", "correct", "wrong", "reveal-correct");
-    p.onclick = null;
-  });
-
-  if (q.mapClickable) {
-    svg.classList.add("clickable");
-    // 背景として表示しているだけの国・地域（bg-country）はクリック対象にしない
-    svg.querySelectorAll("path:not(.bg-country)").forEach((p) => {
-      p.onclick = () => handleMapClick(p);
-    });
-  } else {
-    svg.classList.remove("clickable");
-    const target = svg.querySelector('[id="' + q.mapHighlight + '"]');
-    if (target) target.classList.add("highlight");
-  }
-
-  svg.setAttribute("viewBox", pickQuizViewBox(q).join(" "));
-
-  container.appendChild(svg);
-  container.classList.remove("hidden");
-  state.currentMapSvg = svg;
-}
-
-// ---------- アプリの状態 ----------
-// 正解数・正答率・まちがえた問題は history から毎回計算し直します。
-// （「1問戻る」で回答をやり直しても、矛盾が起きないようにするためです）
-const state = {
-  categories: [],
-  filters: { jpRegions: [], worldRegions: [], levelOnly: null },
-  mode: "fixed", // 'fixed' | 'endless' | 'review'
-  targetLength: 10,
-  history: [], // 答え終わった問題（q.userCorrect / q.userIsDontKnow を持つ）
-  pendingReasks: [],
-  reviewQueue: [],
-  recentGenNames: [],
-  recentItemIds: [],
-  recentCategories: [],
-  currentQuestion: null,
-  currentPairs: null,
-  currentMapSvg: null,
-  answered: false,
-  lastCourse: "today10",
-};
-
-function historyCorrectCount() {
-  return state.history.filter((h) => h.userCorrect).length;
-}
-function historyWrongList() {
-  return state.history.filter((h) => !h.userCorrect).map((h) => ({ prompt: h.prompt, answerText: h.answerText }));
-}
-
-const WRONG_STORAGE_KEY = "mapquiz_wrong_v2";
-
-function loadWrongTickets() {
-  try {
-    const raw = localStorage.getItem(WRONG_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch (e) {
-    return [];
-  }
-}
-function saveWrongTickets(list) {
-  try {
-    if (list.length > 0) localStorage.setItem(WRONG_STORAGE_KEY, JSON.stringify(list));
-    else localStorage.removeItem(WRONG_STORAGE_KEY);
-  } catch (e) {
-    /* localStorageが使えなくても動くようにする */
-  }
-  updateReviewButtonState();
-}
-// 「同じ県・国」でも「県庁所在地」と「地方区分」は別の知識として扱う
-// （例：山形県の県庁所在地を間違えたあと、山形県の地方区分を正解しても、
-// 　　　県庁所在地の方のまちがい記録は消さない）
-// category ではなく factKind で見分ける（例：jpMap category には
-// 「地図→地方」(factKind=region) と「地図→県庁所在地」(factKind=capital) が
-// 同居しているため、category だけでは別の知識同士を混同してしまう）
-function sameKnowledge(t, q) {
-  return t.itemId === q.itemIds[0] && t.kind === q.kind && t.factKind === q.factKind;
-}
-function recordWrongTicket(q) {
-  if (!q.itemIds || q.itemIds.length === 0) return;
-  const list = loadWrongTickets().filter((t) => !sameKnowledge(t, q));
-  list.push({ itemId: q.itemIds[0], kind: q.kind, factKind: q.factKind, category: q.category });
-  saveWrongTickets(list);
-}
-function clearWrongTicket(q) {
-  if (!q.itemIds || q.itemIds.length === 0) return;
-  const list = loadWrongTickets();
-  const filtered = list.filter((t) => !sameKnowledge(t, q));
-  if (filtered.length !== list.length) saveWrongTickets(filtered);
-}
-function updateReviewButtonState() {
-  const btn = document.getElementById("btn-review");
-  btn.disabled = loadWrongTickets().length === 0;
-}
-
-// ---------- 問題を選ぶロジック ----------
-function pickLevel() {
-  if (state.filters.levelOnly) return state.filters.levelOnly;
-  const r = Math.random();
-  if (r < 0.6) return "easy";
-  if (r < 0.9) return "medium";
-  return "hard";
-}
-
-function templatesFor(level, category) {
-  return TEMPLATES.filter(
-    (t) => (!level || t.level === level) && (!category || t.category === category) && t.requires.every((c) => state.categories.includes(c))
-  );
-}
-
-// state（実際のクイズ中の選択）に依存せず、「この範囲チェックの組み合わせで、
-// 指定した難易度の問題が1つでも作れるか」を確認するための、判定専用の関数。
-// ホーム画面で範囲・難易度を選んだ時点で、事前にチェックできるようにする。
-function levelAvailableForCategories(level, categories) {
-  if (!level || categories.length === 0) return true;
-  return categories.some((cat) =>
-    TEMPLATES.some((t) => t.level === level && t.category === cat && t.requires.every((c) => categories.includes(c)))
-  );
-}
-
-function tagQuestion(q, tpl) {
-  q.genName = tpl.name;
-  q.kind = tpl.kind;
-  q.level = tpl.level;
-  q.factKind = tpl.factKind;
-  return q;
-}
-
-// カテゴリをまず均等に抽選してから、そのカテゴリの中でテンプレートを選ぶ。
-// （テンプレート数がカテゴリごとに違うので、先にテンプレートを抽選すると
-// 　テンプレートが多いカテゴリばかり出やすくなってしまうため）
-function generateFreshRandom() {
-  for (let attempt = 0; attempt < 30; attempt++) {
-    const level = pickLevel();
-
-    let catCandidates = state.categories;
-    const lastCat = state.recentCategories[state.recentCategories.length - 1];
-    const prevCat = state.recentCategories[state.recentCategories.length - 2];
-    if (lastCat && lastCat === prevCat) {
-      const alt = state.categories.filter((c) => c !== lastCat);
-      if (alt.length) catCandidates = alt;
-    }
-    const category = randomItem(catCandidates);
-
-    let pool = templatesFor(level, category);
-    if (pool.length === 0) pool = templatesFor(null, category);
-    if (pool.length === 0) continue; // このカテゴリでは出せる問題がない → カテゴリを引き直す
-
-    const tpl = randomItem(pool);
-    if (tpl.name === state.recentGenNames[state.recentGenNames.length - 1]) continue;
-    const q = tpl.fn();
-    if (!q) continue;
-    if (q.itemIds && q.itemIds.some((id) => state.recentItemIds.includes(id))) continue;
-    return tagQuestion(q, tpl);
-  }
-  // 何度試してもダメだったら、条件をゆるめて、作れるテンプレートが見つかるまで順に試す
-  // （北海道のように県が少ない地方＋出せないテンプレートの組み合わせでも、
-  // 　他に作れる問題が1つでもあれば必ず出題できるようにする）
-  const fallbackPool = shuffle(templatesFor(null, null));
-  for (const tpl of fallbackPool) {
-    const q = tpl.fn();
-    if (q) return tagQuestion(q, tpl);
-  }
-  return null;
-}
-
-function generateFreshReview() {
-  while (state.reviewQueue.length) {
-    const ticket = state.reviewQueue.shift();
-    const q = buildTicketQuestion(ticket, true);
-    if (q) return q;
-  }
-  return null;
-}
-
-function buildTicketQuestion(ticket, respectSelection) {
-  const pool = ticket.kind === "jp" ? JAPAN_PREFECTURES : WORLD_COUNTRIES;
-  const item = pool.find((x) => x.id === ticket.itemId);
-  if (!item) return null;
-
-  const base = TEMPLATES.filter((t) => t.kind === ticket.kind && t.forceable && t.name !== ticket.excludeGen);
-  const respecting = respectSelection ? base.filter((t) => t.requires.every((c) => state.categories.includes(c))) : base;
-  // まちがえたときと同じ知識（factKind）を聞くテンプレートを最優先し、
-  // なければ同じ category、それも無ければ何でも forceable なものを使う
-  const sameFactKind = ticket.factKind ? respecting.filter((t) => t.factKind === ticket.factKind) : [];
-  const sameCategory = respecting.filter((t) => t.category === ticket.category);
-  const list = sameFactKind.length ? sameFactKind : sameCategory.length ? sameCategory : respecting.length ? respecting : base;
-  if (!list.length) return null;
-
-  // 県名と県庁所在地がほぼ同じ県・国など、テンプレートによっては
-  // その項目では問題を作れず null を返すことがあるので、他のテンプレートも順に試す
-  // （1つ試して失敗しただけで、復習の問題を丸ごと諦めてしまわないようにする）
-  for (const tpl of shuffle(list)) {
-    const q = tpl.fn(item);
-    if (q) return tagQuestion(q, tpl);
-  }
-  return null;
-}
-
-function nextFreshQuestion() {
-  return state.mode === "review" ? generateFreshReview() : generateFreshRandom();
-}
-
-function scheduleReask(q) {
-  if (!q.itemIds || q.itemIds.length === 0) return;
-  const itemId = q.itemIds[0];
-  // 同じ県・国でも factKind が違えば別の知識として、それぞれ再出題を予約する
-  state.pendingReasks = state.pendingReasks.filter((t) => !(t.itemId === itemId && t.kind === q.kind && t.factKind === q.factKind));
-  state.pendingReasks.push({
-    itemId,
-    kind: q.kind,
-    category: q.category,
-    factKind: q.factKind,
-    excludeGen: q.genName,
-    dueAt: state.history.length + 3 + randInt(3), // 3〜5問後
-  });
-}
-
-function takeDueReask() {
-  const idx = state.pendingReasks.findIndex((t) => t.dueAt <= state.history.length);
-  if (idx === -1) return null;
-  const ticket = state.pendingReasks.splice(idx, 1)[0];
-  const q = buildTicketQuestion(ticket, true);
-  if (q) q.isReask = true;
-  return q;
-}
-
-const REASK_FLUSH_CAP = 10; // 目標数を超えて再出題を消化できる上限（ずっと間違え続けても終わるようにする）
-
-function pickNextQuestion() {
-  for (let guard = 0; guard < 10; guard++) {
-    const reachedTarget = state.mode !== "endless" && state.history.length >= state.targetLength;
-
-    // 目標数を超えて再出題を消化しすぎている場合は、たまっていてもここで打ち切る
-    // （ずっと間違え続けても、コースが永久に終わらなくなるのを防ぐ）
-    if (reachedTarget) {
-      const overflow = state.history.length - state.targetLength;
-      if (overflow >= REASK_FLUSH_CAP) return null;
-    }
-
-    const reask = takeDueReask();
-    if (reask) return reask;
-
-    if (reachedTarget) {
-      if (state.pendingReasks.length === 0) return null;
-      const ticket = state.pendingReasks.shift();
-      const q = buildTicketQuestion(ticket, true);
-      if (q) {
-        q.isReask = true;
-        return q;
-      }
-      continue;
-    }
-
-    const q = nextFreshQuestion();
-    if (q) return q;
-    if (state.mode === "review") return null;
-  }
-  return null;
-}
-
-// ---------- 「わからない」用の短い解説 ----------
-function factLineFor(q) {
-  if (!q.itemIds || q.itemIds.length === 0) return "";
-  const pool = q.kind === "jp" ? JAPAN_PREFECTURES : WORLD_COUNTRIES;
-  const item = pool.find((x) => x.id === q.itemIds[0]);
-  if (!item) return "";
-  // factKind で「実際に聞かれていた内容」に合わせた一言を選ぶ
-  if (q.factKind === "capital") {
-    return q.kind === "jp" ? `${item.name}の都道府県庁所在地は${item.capital}です。` : `${item.name}の首都は${item.capital}です。`;
-  }
-  // 国旗の画像は正解表示（reveal-correct）や上部の表示ですでに見えているので、
-  // 一言メモでは絵文字を埋め込まず、国名だけを文章で伝える
-  if (q.factKind === "flag") return `${item.name}の国旗です。`;
-  return q.kind === "jp" ? `${item.name}は${item.region}地方です。` : `${item.name}は${item.region}です。`;
-}
-
-// ---------- 画面の共通操作 ----------
-function getSelectedCategories() {
-  const map = [
-    ["chk-jpMap", "jpMap"],
-    ["chk-jpCapital", "jpCapital"],
-    ["chk-jpRegion", "jpRegion"],
-    ["chk-worldMap", "worldMap"],
-    ["chk-worldCapital", "worldCapital"],
-    ["chk-worldFlag", "worldFlag"],
-  ];
-  return map.filter(([id]) => document.getElementById(id).checked).map(([, key]) => key);
-}
-
-function getCheckedValues(containerId) {
-  return Array.from(document.querySelectorAll("#" + containerId + " input:checked")).map((cb) => cb.value);
-}
-
-function getSelectedFilters() {
-  const jpRegions = getCheckedValues("filter-jp-regions");
-  const worldRegions = getCheckedValues("filter-world-regions");
-  const levelOnly = document.getElementById("filter-level").value || null;
-  return { jpRegions, worldRegions, levelOnly };
-}
-
-function showHomeMessage(msg) {
-  document.getElementById("home-message").textContent = msg;
-}
-
-function switchScreen(name) {
-  document.querySelectorAll(".screen").forEach((s) => s.classList.add("hidden"));
-  document.getElementById("screen-" + name).classList.remove("hidden");
-}
-
-function resetSessionState() {
-  state.history = [];
-  state.pendingReasks = [];
-  state.reviewQueue = [];
-  state.recentGenNames = [];
-  state.recentItemIds = [];
-  state.recentCategories = [];
-  state.currentQuestion = null;
-  state.answered = false;
-}
-
-// ---------- クイズの進行 ----------
-function startQuiz(course) {
-  showHomeMessage("");
-  resetSessionState();
+  courseMode = course;
+  lastCourseConfig = { course, scopes: [...scopes], filters: { ...filters } };
+  retryKeys = new Set();
 
   if (course === "review") {
-    const tickets = loadWrongTickets();
-    if (tickets.length === 0) {
-      showHomeMessage("復習する問題がありません");
+    questions = shuffle(getWrongBank().filter((item) => {
+      if (!scopes.includes(item.scope)) return false;
+      if (filters.difficulty && item.difficulty !== filters.difficulty) return false;
+      if (item.knowledgeKey?.startsWith("jp:") && filters.japanRegion && item.entityRegion !== filters.japanRegion) return false;
+      if (item.knowledgeKey?.startsWith("world:") && filters.worldRegion && item.entityRegion !== filters.worldRegion) return false;
+      return true;
+    }));
+    if (!questions.length) {
+      messageElement.textContent = "選んだ範囲に、復習する問題はまだありません。";
       return;
     }
-    state.mode = "review";
-    state.reviewQueue = shuffle(tickets);
-    state.targetLength = tickets.length;
-    state.categories = ALL_CATEGORIES;
-    state.filters = { jpRegions: [], worldRegions: [], levelOnly: null };
-  } else if (course === "today10" || course === "today20") {
-    state.mode = "fixed";
-    state.categories = ALL_CATEGORIES;
-    state.filters = { jpRegions: [], worldRegions: [], levelOnly: null };
-    state.targetLength = course === "today10" ? 10 : 20;
   } else {
-    const categories = getSelectedCategories();
-    if (categories.length === 0) {
-      showHomeMessage("出題する範囲を1つ以上選んでください");
+    const requestedCount = course === "endless" || course === "random" ? 20 : Number(course);
+    questions = buildBalancedCourse(scopes, requestedCount, filters, { allowRepeats: course === "endless" });
+    if (!questions.length) {
+      messageElement.textContent = "この条件で作れる問題がありません。範囲を少し広げてください。";
       return;
     }
-    state.categories = categories;
-    state.filters = getSelectedFilters();
-    if (course === "30") {
-      state.mode = "fixed";
-      state.targetLength = 30;
-    } else {
-      state.mode = "endless";
-      state.targetLength = Infinity;
+    if (course !== "endless" && questions.length < requestedCount) {
+      courseNote.textContent = `同じ問題のくり返しを避けるため、この条件では${questions.length}問で出します。`;
+      courseNote.classList.remove("hidden");
     }
   }
-
-  state.lastCourse = course;
-  switchScreen("quiz");
-  document.getElementById("btn-finish-endless").classList.toggle("hidden", state.mode !== "endless");
+  currentIndex = 0;
+  answers = [];
+  quizScreen.dataset.plannedDifficulties = questions.map((question) => question.difficulty).join(",");
+  quizScreen.dataset.plannedTemplates = questions.map((question) => question.templateId).join(",");
+  quizScreen.dataset.plannedKnowledge = questions.map((question) => question.knowledgeKey).join(",");
+  showScreen(quizScreen);
+  window.scrollTo({ top: 0 });
   renderQuestion();
+}
+
+function startFromSetup() {
+  const course = $('input[name="course"]:checked').value;
+  startCourse(course, selectedScopes(), selectedFilters());
+}
+
+function startQuickCourse(course) {
+  const scopes = Object.keys(CATEGORY_LABELS);
+  startCourse(course, scopes, {}, $("#home-message"));
+}
+
+function resetWorldMap() {
+  worldMapElement.querySelectorAll(".map-hit-assist").forEach((element) => element.remove());
+  worldMapElement.querySelectorAll("[data-quiz-highlight='true']").forEach((element) => {
+    element.style.removeProperty("fill");
+    element.style.removeProperty("stroke");
+    element.removeAttribute("data-quiz-highlight");
+  });
+  worldMapElement.querySelectorAll("[data-map-click]").forEach((element) => {
+    element.removeAttribute("data-map-click");
+    element.removeAttribute("role");
+    element.removeAttribute("tabindex");
+    element.removeAttribute("aria-label");
+    element.onclick = null;
+    element.onkeydown = null;
+  });
+  const svg = worldMapElement.querySelector("svg");
+  if (svg?.dataset.fullViewBox) svg.setAttribute("viewBox", svg.dataset.fullViewBox);
+}
+
+function highlightWorldCountry(mapId) {
+  const apply = () => {
+    resetWorldMap();
+    const target = worldMapElement.querySelector(`[id="${CSS.escape(mapId)}"]`);
+    if (!target) return;
+    const parts = target.matches("path") ? [target] : [...target.querySelectorAll("path")];
+    (parts.length ? parts : [target]).forEach((element) => {
+      element.style.setProperty("fill", "#f4a261", "important");
+      element.style.setProperty("stroke", "#9b4b16", "important");
+      element.setAttribute("data-quiz-highlight", "true");
+    });
+  };
+  worldMapReady.then(apply);
+}
+
+function fitJapanQuizMap(region) {
+  const svg = japanHighlightMapElement.querySelector("svg");
+  if (!svg) return;
+  if (svg.dataset.fullViewBox) svg.setAttribute("viewBox", svg.dataset.fullViewBox);
+  const codes = PREFECTURES.filter((prefecture) => prefecture.region === region).map((prefecture) => String(prefecture.code));
+  const boxes = [...japanHighlightMapElement.querySelectorAll("[data-code]")]
+    .filter((element) => codes.includes(String(element.dataset.code)))
+    .map((element) => {
+      try { return element.getBBox(); } catch { return null; }
+    })
+    .filter((box) => box && box.width > 0 && box.height > 0);
+  if (!boxes.length) return;
+  const minX = Math.min(...boxes.map((box) => box.x));
+  const minY = Math.min(...boxes.map((box) => box.y));
+  const maxX = Math.max(...boxes.map((box) => box.x + box.width));
+  const maxY = Math.max(...boxes.map((box) => box.y + box.height));
+  const width = maxX - minX;
+  const height = maxY - minY;
+  const padX = Math.max(width * 0.22, 55);
+  const padY = Math.max(height * 0.22, 55);
+  svg.setAttribute("viewBox", `${minX - padX} ${minY - padY} ${width + padX * 2} ${height + padY * 2}`);
+}
+
+function addJapanMapHitAssists(prefectures) {
+  const svg = japanHighlightMapElement.querySelector("svg");
+  const viewBox = worldViewBox(svg);
+  const svgRect = svg?.getBoundingClientRect();
+  if (!svg || !viewBox || !svgRect?.width || !svgRect?.height) return;
+  const scale = Math.min(svgRect.width / viewBox.width, svgRect.height / viewBox.height);
+  const radius = 18 / scale;
+  prefectures.forEach((prefecture) => {
+    const target = japanHighlightMapElement.querySelector(`[data-code="${prefecture.code}"]`);
+    const box = worldElementBoxInSvg(svg, primaryWorldMapPart(target));
+    if (!box || Math.min(box.width * scale, box.height * scale) >= 32) return;
+    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    circle.setAttribute("class", "map-hit-assist");
+    circle.setAttribute("cx", box.x + box.width / 2);
+    circle.setAttribute("cy", box.y + box.height / 2);
+    circle.setAttribute("r", radius);
+    circle.setAttribute("role", "button");
+    circle.setAttribute("tabindex", "0");
+    circle.setAttribute("aria-label", prefecture.name);
+    circle.onclick = () => answerQuestion(prefecture.name);
+    circle.onkeydown = (event) => {
+      if (event.key === "Enter" || event.key === " ") answerQuestion(prefecture.name);
+    };
+    svg.append(circle);
+  });
+}
+
+function setupJapanMapClick(region) {
+  japanMapReady.then(() => {
+    paintJapanMap(japanHighlightMapElement, []);
+    fitJapanQuizMap(region);
+    japanHighlightMapElement.classList.add("clickable-japan");
+    const regionPrefectures = PREFECTURES.filter((prefecture) => prefecture.region === region);
+    japanHighlightMapElement.querySelectorAll("[data-code]").forEach((element) => {
+      const prefecture = regionPrefectures.find((item) => String(item.code) === String(element.dataset.code));
+      if (!prefecture) return;
+      element.setAttribute("role", "button");
+      element.setAttribute("tabindex", "0");
+      element.setAttribute("aria-label", prefecture.name);
+      element.onclick = () => answerQuestion(prefecture.name);
+      element.onkeydown = (event) => {
+        if (event.key === "Enter" || event.key === " ") answerQuestion(prefecture.name);
+      };
+    });
+    addJapanMapHitAssists(regionPrefectures);
+  });
+}
+
+function addWorldMapHitAssists(countries) {
+  const svg = worldMapElement.querySelector("svg");
+  const viewBox = worldViewBox(svg);
+  const svgRect = svg?.getBoundingClientRect();
+  if (!svg || !viewBox || !svgRect?.width || !svgRect?.height) return;
+  const scale = Math.min(svgRect.width / viewBox.width, svgRect.height / viewBox.height);
+  const radius = 18 / scale;
+  countries.forEach((country) => {
+    const target = worldMapElement.querySelector(`[id="${CSS.escape(country.mapId)}"]`);
+    const box = worldElementBoxInSvg(svg, primaryWorldMapPart(target));
+    if (!box || Math.min(box.width * scale, box.height * scale) >= 28) return;
+    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    circle.setAttribute("class", "map-hit-assist");
+    circle.setAttribute("cx", box.x + box.width / 2);
+    circle.setAttribute("cy", box.y + box.height / 2);
+    circle.setAttribute("r", radius);
+    circle.setAttribute("data-map-click", "true");
+    circle.setAttribute("role", "button");
+    circle.setAttribute("tabindex", "0");
+    circle.setAttribute("aria-label", country.name);
+    circle.onclick = () => answerQuestion(country.name);
+    circle.onkeydown = (event) => {
+      if (event.key === "Enter" || event.key === " ") answerQuestion(country.name);
+    };
+    svg.append(circle);
+  });
+}
+
+function setupWorldMapClick(region, targetMapId) {
+  worldMapReady.then(() => {
+    resetWorldMap();
+    worldMapElement.classList.add("clickable-world");
+    const targetCountry = COUNTRIES.find((country) => country.mapId === targetMapId);
+    const canZoom = targetCountry?.printPrimary !== false;
+    const regionCountries = COUNTRIES.filter((country) => country.region === region && country.mapQuiz !== false);
+    const clickableCountries = canZoom
+      ? regionCountries.filter((country) => country.printPrimary !== false)
+      : COUNTRIES.filter((country) => country.mapQuiz !== false);
+    if (canZoom) fitWorldMapToCountries(worldMapElement, clickableCountries);
+    clickableCountries.forEach((country) => {
+      const target = worldMapElement.querySelector(`[id="${CSS.escape(country.mapId)}"]`);
+      if (!target) return;
+      target.setAttribute("data-map-click", "true");
+      target.setAttribute("role", "button");
+      target.setAttribute("tabindex", "0");
+      target.setAttribute("aria-label", country.name);
+      target.onclick = () => answerQuestion(country.name);
+      target.onkeydown = (event) => {
+        if (event.key === "Enter" || event.key === " ") answerQuestion(country.name);
+      };
+    });
+    addWorldMapHitAssists(clickableCountries);
+  });
+}
+
+function clearJapanMapClick() {
+  japanHighlightMapElement.classList.remove("clickable-japan");
+  const svg = japanHighlightMapElement.querySelector("svg");
+  if (svg?.dataset.fullViewBox) svg.setAttribute("viewBox", svg.dataset.fullViewBox);
+  japanHighlightMapElement.querySelectorAll(".map-hit-assist").forEach((element) => element.remove());
+  japanHighlightMapElement.querySelectorAll("[data-code]").forEach((element) => {
+    element.removeAttribute("role");
+    element.removeAttribute("tabindex");
+    element.removeAttribute("aria-label");
+    element.onclick = null;
+    element.onkeydown = null;
+  });
+}
+
+function renderVisual(visual) {
+  const visualArea = $("#visual-area");
+  const japanNumberedMap = $("#japan-numbered-map");
+  const japanHighlightMap = $("#japan-highlight-map");
+  const worldMap = $("#world-map");
+  const flag = $("#flag-display");
+  [visualArea, japanNumberedMap, japanHighlightMap, worldMap, flag].forEach((el) => el.classList.add("hidden"));
+  resetWorldMap();
+  clearJapanMapClick();
+  worldMapElement.classList.remove("clickable-world");
+  if (!visual) return;
+  visualArea.classList.remove("hidden");
+  if (visual.kind === "japanNumbered") japanNumberedMap.classList.remove("hidden");
+  if (visual.kind === "japanHighlight") {
+    japanHighlightMap.classList.remove("hidden");
+    japanMapReady.then(() => paintJapanMap(japanHighlightMap, visual.codes));
+  }
+  if (visual.kind === "japanClick") {
+    japanHighlightMap.classList.remove("hidden");
+    setupJapanMapClick(visual.region);
+  }
+  if (visual.kind === "world") {
+    worldMap.classList.remove("hidden");
+    highlightWorldCountry(visual.mapId);
+  }
+  if (visual.kind === "worldClick") {
+    worldMap.classList.remove("hidden");
+    setupWorldMapClick(visual.region, visual.mapId);
+  }
+  if (visual.kind === "flag") {
+    flag.textContent = visual.value;
+    flag.classList.remove("hidden");
+  }
 }
 
 function renderQuestion() {
-  const q = pickNextQuestion();
-  if (!q) {
-    finishQuiz();
-    return;
+  locked = false;
+  let question = questions[currentIndex];
+  const previous = questions[currentIndex - 1];
+  if (question.isRetry && previous?.templateId === question.templateId) {
+    const replacement = alternateQuestionFor(question, [previous.templateId, questions[currentIndex + 1]?.templateId].filter(Boolean));
+    if (replacement) {
+      question = { ...replacement, isRetry: true, retryOf: question.retryOf };
+      questions[currentIndex] = question;
+    }
   }
-  displayQuestion(q);
-}
+  quizScreen.dataset.difficulty = question.difficulty;
+  quizScreen.dataset.templateId = question.templateId;
+  quizScreen.dataset.knowledgeKey = question.knowledgeKey;
+  $("#category-badge").textContent = CATEGORY_LABELS[question.scope];
+  $("#progress-text").textContent = `${currentIndex + 1} / ${questions.length}`;
+  $("#progress-bar").style.width = `${((currentIndex + 1) / questions.length) * 100}%`;
+  $("#question-type").textContent = `＜${question.level || "やさしい問題"}＞ ${question.type}`;
+  $("#question-text").textContent = question.prompt;
+  $("#feedback").textContent = "";
+  $("#feedback").className = "feedback";
+  renderVisual(question.visual);
 
-// 与えられた問題を画面に表示する（新しく作った問題にも、「戻る」でやり直す問題にも使う）
-function displayQuestion(q) {
-  state.currentQuestion = q;
-  state.answered = false;
-
-  document.getElementById("quiz-progress").textContent = `第${state.history.length + 1}問`;
-  document.getElementById("btn-back").disabled = state.history.length === 0;
-  document.getElementById("quiz-prompt").textContent = q.prompt;
-  document.getElementById("btn-next").classList.add("hidden");
-  document.getElementById("btn-dontknow").classList.remove("hidden");
-
-  const fb = document.getElementById("quiz-feedback");
-  fb.classList.add("hidden");
-  fb.classList.remove("ok", "ng");
-  fb.innerHTML = "";
-
-  const flagBox = document.getElementById("quiz-flag");
-  if (q.flagPrompt) {
-    flagBox.innerHTML = "";
-    flagBox.appendChild(buildFlagImg(q.flagPrompt));
-    flagBox.classList.remove("hidden");
-  } else {
-    flagBox.innerHTML = "";
-    flagBox.classList.add("hidden");
-  }
-
-  const mapwrap = document.getElementById("quiz-mapwrap");
-  if (q.mapMode) {
-    renderMap(mapwrap, q);
-  } else {
-    mapwrap.innerHTML = "";
-    mapwrap.classList.add("hidden");
-    state.currentMapSvg = null;
-  }
-
-  const choicesBox = document.getElementById("quiz-choices");
-  if (q.mapClickable) {
-    choicesBox.innerHTML = "";
-    choicesBox.classList.add("hidden");
-    state.currentPairs = null;
-  } else {
-    choicesBox.classList.remove("hidden");
-    renderChoices(choicesBox, q);
-  }
-
-  updateScoreDisplay();
-}
-
-function renderChoices(container, q) {
-  container.innerHTML = "";
-  const pairs = [];
-  q.choices.forEach((choice) => {
-    const btn = document.createElement("button");
-    btn.className = "choice-btn" + (q.isFlagChoices ? " flag-choice" : "");
-    if (q.isFlagChoices) btn.appendChild(buildFlagImg(choice.label, "flag-choice-img"));
-    else btn.textContent = choice.label;
-    pairs.push({ btn, choice });
-    container.appendChild(btn);
+  const choices = $("#choices");
+  choices.replaceChildren();
+  question.choices.forEach((choice, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "choice-button";
+    button.textContent = `${index + 1}. ${choice}`;
+    button.dataset.choice = choice;
+    button.addEventListener("click", () => answerQuestion(choice));
+    choices.append(button);
   });
-  pairs.forEach(({ btn, choice }) => {
-    btn.addEventListener("click", () => handleChoiceClick(pairs, btn, choice));
+  $("#unknown-button").disabled = false;
+  $("#key-hint").textContent = question.interaction.endsWith("MapClick")
+    ? "地方・地域を拡大しています。地図を押して答えます。"
+    : "数字キー 1〜4 でも答えられます。";
+  choices.querySelector("button")?.focus({ preventScroll: true });
+}
+
+function alternateQuestionFor(question, excludedTemplates = []) {
+  if (!lastCourseConfig) return null;
+  const candidates = filteredQuestionPool(lastCourseConfig.scopes, lastCourseConfig.filters)
+    .filter((item) => item.knowledgeKey === question.knowledgeKey && item.templateId !== question.templateId && item.id !== question.id);
+  let varied = candidates.filter((item) => item.interaction !== question.interaction && item.type !== question.type && !excludedTemplates.includes(item.templateId));
+  if (!varied.length) varied = candidates.filter((item) => !excludedTemplates.includes(item.templateId));
+  if (!varied.length) varied = candidates;
+  const usage = Object.fromEntries(QUIZ_TEMPLATES.map((template) => [template.id, questions.filter((item) => item.templateId === template.id).length]));
+  const minUsage = Math.min(...varied.map((item) => usage[item.templateId] || 0));
+  const alternate = sample(varied.filter((item) => (usage[item.templateId] || 0) === minUsage))[0];
+  return alternate ? { ...alternate, id: `${alternate.id}-retry-${Date.now()}`, isRetry: true, retryOf: question.id } : null;
+}
+
+function scheduleAlternateRetry(question) {
+  if (question.isRetry || retryKeys.has(question.knowledgeKey)) return;
+  const gap = 3 + Math.floor(Math.random() * 3);
+  let targetIndex = currentIndex + gap + 1;
+  if (targetIndex >= questions.length && courseMode !== "endless") return;
+  if (targetIndex >= questions.length && courseMode === "endless") {
+    const fillersNeeded = targetIndex - questions.length + 1;
+    questions.push(...buildBalancedCourse(
+      lastCourseConfig.scopes,
+      fillersNeeded,
+      lastCourseConfig.filters,
+      { allowRepeats: true },
+    ));
+  }
+  const openIndex = questions.findIndex((item, index) => index >= targetIndex && index <= targetIndex + 2 && !item.isRetry);
+  if (openIndex < 0) return;
+  targetIndex = openIndex;
+  const excludedTemplates = [questions[targetIndex - 1]?.templateId, questions[targetIndex]?.templateId].filter(Boolean);
+  const alternate = alternateQuestionFor(question, excludedTemplates);
+  if (!alternate) return;
+  retryKeys.add(question.knowledgeKey);
+  questions[targetIndex] = alternate;
+}
+
+function addEndlessQuestionsIfNeeded() {
+  if (courseMode !== "endless" || questions.length - currentIndex > 6 || !lastCourseConfig) return;
+  const more = buildBalancedCourse(lastCourseConfig.scopes, 12, lastCourseConfig.filters, { allowRepeats: true });
+  const previous = questions.at(-1);
+  const start = more.findIndex((item) => item.knowledgeKey !== previous?.knowledgeKey && item.templateId !== previous?.templateId);
+  questions.push(...(start > 0 ? [...more.slice(start), ...more.slice(0, start)] : more));
+}
+
+function answerQuestion(selected, { skipped = false } = {}) {
+  if (locked) return;
+  locked = true;
+  const question = questions[currentIndex];
+  const isCorrect = !skipped && selected === question.answer;
+  answers.push({ question, selected: skipped ? "わからない" : selected, isCorrect });
+  updateWrongBank(question, isCorrect);
+  if (!isCorrect) scheduleAlternateRetry(question);
+
+  document.querySelectorAll(".choice-button").forEach((button) => {
+    button.disabled = true;
+    if (button.dataset.choice === question.answer) button.classList.add("correct");
+    if (!isCorrect && button.dataset.choice === selected) button.classList.add("wrong");
   });
-  state.currentPairs = pairs;
+  $("#unknown-button").disabled = true;
+
+  const feedback = $("#feedback");
+  feedback.classList.add(isCorrect ? "correct" : "wrong");
+  feedback.textContent = isCorrect
+    ? `○ 正解！ ${question.explanation}`
+    : `${skipped ? "わからなくてもOK。" : "× 正しく直そう。"} 正解：${question.answer}。${question.explanation}`;
+
+  window.setTimeout(() => {
+    currentIndex += 1;
+    addEndlessQuestionsIfNeeded();
+    if (currentIndex < questions.length) renderQuestion();
+    else showResults();
+  }, isCorrect ? 750 : 1800);
 }
 
-function handleChoiceClick(pairs, btn, choice) {
-  if (state.answered) return;
-  state.answered = true;
+function showResults() {
+  quizScreen.classList.add("hidden");
+  resultScreen.classList.remove("hidden");
+  window.scrollTo({ top: 0 });
+  const correct = answers.filter((answer) => answer.isCorrect).length;
+  const wrong = answers.filter((answer) => !answer.isCorrect);
+  $("#score-count").textContent = `${correct} / ${answers.length}`;
+  const rate = answers.length ? Math.round((correct / answers.length) * 100) : 0;
+  $("#score-rate").textContent = `${rate}%`;
+  $("#assessment-text").textContent = rate >= 80
+    ? "○ 基本がよく身についています。"
+    : rate >= 50
+      ? "△ まちがえた問題をもう一度やってみよう。"
+      : "× まずは10問コースで、同じ基本をくり返そう。";
 
-  btn.classList.add(choice.correct ? "correct" : "wrong");
-  if (!choice.correct) {
-    const correctPair = pairs.find((p) => p.choice.correct);
-    if (correctPair) correctPair.btn.classList.add("reveal-correct");
-  }
-  pairs.forEach((p) => (p.btn.disabled = true));
-
-  finishAnswer(choice.correct, false);
-}
-
-function handleMapClick(pathEl) {
-  if (state.answered) return;
-  state.answered = true;
-
-  const correct = pathEl.id === state.currentQuestion.targetId;
-  pathEl.classList.add(correct ? "correct" : "wrong");
-  if (!correct) {
-    const target = pathEl.ownerSVGElement.querySelector('[id="' + state.currentQuestion.targetId + '"]');
-    if (target) target.classList.add("reveal-correct");
-  }
-
-  finishAnswer(correct, false);
-}
-
-function handleDontKnow() {
-  if (state.answered) return;
-  state.answered = true;
-  const q = state.currentQuestion;
-
-  if (q.mapClickable && state.currentMapSvg) {
-    const target = state.currentMapSvg.querySelector('[id="' + q.targetId + '"]');
-    if (target) target.classList.add("reveal-correct");
-  } else if (state.currentPairs) {
-    state.currentPairs.forEach((p) => {
-      p.btn.disabled = true;
-      if (p.choice.correct) p.btn.classList.add("reveal-correct");
+  const list = $("#mistakes-list");
+  list.replaceChildren();
+  if (!wrong.length) {
+    const p = document.createElement("p");
+    p.textContent = "全問正解です！";
+    list.append(p);
+  } else {
+    wrong.forEach(({ question, selected }) => {
+      const item = document.createElement("div");
+      item.className = "mistake-item";
+      item.innerHTML = `<p>${question.prompt}</p><p>あなたの答え：${selected}</p><p class="mistake-answer">正解：${question.answer}</p>`;
+      list.append(item);
     });
   }
-
-  finishAnswer(false, true);
+  retryButton.disabled = !getWrongBank().length;
 }
 
-function finishAnswer(correct, isDontKnow) {
-  const q = state.currentQuestion;
-  q.userCorrect = correct;
-  q.userIsDontKnow = isDontKnow;
-  state.history.push(q);
-
-  if (correct) {
-    clearWrongTicket(q);
-  } else {
-    scheduleReask(q);
-    recordWrongTicket(q);
-  }
-
-  state.recentGenNames.push(q.genName);
-  if (state.recentGenNames.length > 3) state.recentGenNames.shift();
-  state.recentCategories.push(q.category);
-  if (state.recentCategories.length > 3) state.recentCategories.shift();
-  if (q.itemIds) {
-    state.recentItemIds.push(...q.itemIds);
-    while (state.recentItemIds.length > 5) state.recentItemIds.shift();
-  }
-
-  const fb = document.getElementById("quiz-feedback");
-  fb.classList.remove("hidden");
-  fb.innerHTML = "";
-  if (correct) {
-    fb.textContent = "🎉 正解！";
-    fb.classList.add("ok");
-  } else {
-    const line1 = document.createElement("div");
-    // ○×問題の answerText は already「×　正しくは「〜」」の形で説明を含んでいるので、
-    // 「正解は「」」でさらに二重括弧にしない
-    if (q.isTrueFalse) {
-      line1.textContent = isDontKnow ? `正解：${q.answerText}` : `❌ 残念…　${q.answerText}`;
-    } else {
-      line1.textContent = isDontKnow ? `正解：${q.answerText}` : `❌ 残念…　正解は「${q.answerText}」`;
-    }
-    fb.appendChild(line1);
-    // ○×問題はすでに一言解説を含んでいるので、下の一言は重ねて出さない
-    const fact = q.isTrueFalse ? "" : factLineFor(q);
-    if (fact) {
-      const line2 = document.createElement("div");
-      line2.className = "feedback-fact";
-      line2.textContent = fact;
-      fb.appendChild(line2);
-    }
-    fb.classList.add("ng");
-  }
-
-  document.getElementById("btn-next").classList.remove("hidden");
-  document.getElementById("btn-dontknow").classList.add("hidden");
-  updateScoreDisplay();
+function retryWrong() {
+  const scopes = [...new Set(getWrongBank().map((item) => item.scope))];
+  if (!scopes.length) return;
+  startCourse("review", scopes, {});
 }
 
-function updateScoreDisplay() {
-  document.getElementById("quiz-score").textContent = `正解 ${historyCorrectCount()}`;
+function goHome() {
+  [setupScreen, quizScreen, resultScreen, printSetupScreen, worksheetScreen].forEach((screen) => screen.classList.add("hidden"));
+  homeScreen.classList.remove("hidden");
+  window.scrollTo({ top: 0 });
+  updateReviewCount();
 }
 
-function nextQuestion() {
-  renderQuestion();
+const selectedPrintCodes = new Set();
+const PRINT_LETTERS = ["ア", "イ", "ウ", "エ", "オ", "カ", "キ", "ク", "ケ", "コ", "サ", "シ"];
+
+function showScreen(screen) {
+  [homeScreen, setupScreen, quizScreen, resultScreen, printSetupScreen, worksheetScreen]
+    .forEach((item) => item.classList.add("hidden"));
+  screen.classList.remove("hidden");
+  window.scrollTo({ top: 0 });
 }
 
-// 1問前に戻って、その問題を答え直せるようにする
-function goBack() {
-  if (state.history.length === 0) return;
-  const prev = state.history.pop();
-
-  // この問題の答えがまちがっていた場合に予約されていた再出題を取り消す（重複を防ぐ）
-  if (prev.itemIds && prev.itemIds.length) {
-    const itemId = prev.itemIds[0];
-    state.pendingReasks = state.pendingReasks.filter((t) => !(t.itemId === itemId && t.kind === prev.kind && t.excludeGen === prev.genName));
-  }
-
-  // 「直近の出題」トラッキングも1つ戻す
-  if (state.recentGenNames[state.recentGenNames.length - 1] === prev.genName) state.recentGenNames.pop();
-  if (state.recentCategories[state.recentCategories.length - 1] === prev.category) state.recentCategories.pop();
-  if (prev.itemIds) prev.itemIds.forEach(() => state.recentItemIds.pop());
-
-  delete prev.userCorrect;
-  delete prev.userIsDontKnow;
-  displayQuestion(prev);
+function printPrefectures() {
+  return PREFECTURES.filter((prefecture) => selectedPrintCodes.has(prefecture.code));
 }
 
-function finishQuiz() {
-  switchScreen("result");
-  renderResult();
+function selectedPrintRegions() {
+  return [...new Set(printPrefectures().map((prefecture) => prefecture.region))];
 }
 
-function renderResult() {
-  const total = state.history.length;
-  const correct = historyCorrectCount();
-  const rate = total ? Math.round((correct / total) * 100) : 0;
-  const wrongList = historyWrongList();
-
-  document.getElementById("result-summary").textContent = `正解数: ${correct} / ${total}　正答率: ${rate}%`;
-
-  const wrongBox = document.getElementById("result-wrong");
-  wrongBox.innerHTML = "";
-  if (wrongList.length === 0) {
-    wrongBox.textContent = "まちがえた問題はありませんでした。すごい！";
-  } else {
-    const ul = document.createElement("ul");
-    wrongList.forEach((w) => {
-      const li = document.createElement("li");
-      li.textContent = `${w.prompt} → 正解：${w.answerText}`;
-      ul.appendChild(li);
-    });
-    wrongBox.appendChild(ul);
-  }
-
-  document.getElementById("btn-result-review").disabled = loadWrongTickets().length === 0;
+function isWorldPrintAll() {
+  return selectedWorldPrintRegions.has("世界全体");
 }
 
-// ---------- 画面の初期化 ----------
-// 地方・地域は複数選べるようにチェックボックスで並べる
-function populateRegionCheckboxes(containerId, options) {
-  const wrap = document.getElementById(containerId);
-  wrap.innerHTML = "";
-  options.forEach((opt) => {
-    const label = document.createElement("label");
-    label.className = "check-item region-check-item";
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.value = opt;
-    label.appendChild(cb);
-    label.appendChild(document.createTextNode(opt));
-    wrap.appendChild(label);
+function activeWorldPrintRegions() {
+  return isWorldPrintAll()
+    ? [...WORLD_REGIONS]
+    : WORLD_REGIONS.filter((region) => selectedWorldPrintRegions.has(region));
+}
+
+function worldPrintRegionLabel() {
+  return isWorldPrintAll() ? "世界全体" : activeWorldPrintRegions().join("・");
+}
+
+function syncPrintPicker() {
+  document.querySelectorAll("#prefecture-picker input").forEach((input) => {
+    input.checked = selectedPrintCodes.has(Number(input.value));
   });
-}
-
-// 選んだ範囲チェックボックス＋難易度の組み合わせで、指定した難易度の問題が
-// 作れるかどうかを見て、注意書きの文言を切りかえる
-const DEFAULT_FILTER_NOTE =
-  "※範囲を1つだけに絞ると、指定した難易度の問題が少なく、別の難易度が混ざることがあります。複数の範囲を選ぶとより正確になります。";
-const LEVEL_LABELS = { easy: "やさしい", medium: "少し考える", hard: "考える" };
-
-function updateFilterLevelNote() {
-  const note = document.getElementById("filter-level-note");
-  if (!note) return;
-  const level = document.getElementById("filter-level").value || null;
-  const categories = getSelectedCategories();
-  if (!level || categories.length === 0) {
-    note.textContent = DEFAULT_FILTER_NOTE;
-    return;
-  }
-  if (!levelAvailableForCategories(level, categories)) {
-    note.textContent = `※選んだ範囲では「${LEVEL_LABELS[level]}問題」を作れないため、別の難易度の問題になります。範囲を増やすと選べるようになることがあります。`;
+  document.querySelectorAll("#region-picker button").forEach((button) => {
+    const members = PREFECTURES.filter((prefecture) => prefecture.region === button.dataset.region);
+    const activeCount = members.filter((prefecture) => selectedPrintCodes.has(prefecture.code)).length;
+    button.classList.toggle("selected", activeCount === members.length);
+    button.classList.toggle("partial", activeCount > 0 && activeCount < members.length);
+    button.setAttribute("aria-pressed", activeCount === members.length ? "true" : "false");
+  });
+  const prefs = printPrefectures();
+  const regions = selectedPrintRegions();
+  if (printMode === "japan") {
+    $("#print-selection-summary").textContent = prefs.length
+      ? `選択中：日本地理・${regions.join("・")}（${prefs.length}都道府県）`
+      : "日本地理：地方を選んでください。";
   } else {
-    note.textContent = DEFAULT_FILTER_NOTE;
+    const count = worldPrintCountries().length;
+    const label = worldPrintRegionLabel();
+    $("#print-selection-summary").textContent = label
+      ? `選択中：世界地理・${label}（主要${count}か国）`
+      : "世界地理：地域を選んでください。";
   }
 }
 
-function init() {
-  populateRegionCheckboxes("filter-jp-regions", JAPAN_REGIONS);
-  populateRegionCheckboxes("filter-world-regions", WORLD_REGIONS);
+function syncPrintMode() {
+  $("#japan-print-options").classList.toggle("hidden", printMode !== "japan");
+  $("#world-print-options").classList.toggle("hidden", printMode !== "world");
+  document.querySelectorAll("[data-print-mode]").forEach((button) => {
+    const selected = button.dataset.printMode === printMode;
+    button.classList.toggle("selected", selected);
+    button.setAttribute("aria-pressed", selected ? "true" : "false");
+  });
+  syncPrintPicker();
+}
 
-  const filterInputs = [
-    "chk-jpMap",
-    "chk-jpCapital",
-    "chk-jpRegion",
-    "chk-worldMap",
-    "chk-worldCapital",
-    "chk-worldFlag",
-    "filter-level",
+function setupPrintPicker() {
+  const regionPicker = $("#region-picker");
+  JAPAN_REGIONS.forEach((region) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.region = region;
+    button.textContent = region;
+    button.setAttribute("aria-pressed", "false");
+    button.addEventListener("click", () => {
+      const members = PREFECTURES.filter((prefecture) => prefecture.region === region);
+      const allSelected = members.every((prefecture) => selectedPrintCodes.has(prefecture.code));
+      members.forEach((prefecture) => allSelected
+        ? selectedPrintCodes.delete(prefecture.code)
+        : selectedPrintCodes.add(prefecture.code));
+      syncPrintPicker();
+    });
+    regionPicker.append(button);
+  });
+
+  const prefecturePicker = $("#prefecture-picker");
+  JAPAN_REGIONS.forEach((region) => {
+    const group = document.createElement("section");
+    group.className = "prefecture-group";
+    const heading = document.createElement("h3");
+    heading.textContent = region;
+    group.append(heading);
+    PREFECTURES.filter((prefecture) => prefecture.region === region).forEach((prefecture) => {
+      const label = document.createElement("label");
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.value = prefecture.code;
+      input.addEventListener("change", () => {
+        if (input.checked) selectedPrintCodes.add(prefecture.code);
+        else selectedPrintCodes.delete(prefecture.code);
+        syncPrintPicker();
+      });
+      label.append(input, document.createTextNode(` ${prefecture.name}`));
+      group.append(label);
+    });
+    prefecturePicker.append(group);
+  });
+
+  const worldRegionPicker = $("#world-print-region-picker");
+  ["世界全体", ...WORLD_REGIONS].forEach((region) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.worldPrintRegion = region;
+    button.textContent = region;
+    button.addEventListener("click", () => {
+      $("#print-message").textContent = "";
+      if (region === "世界全体") {
+        selectedWorldPrintRegions.clear();
+        selectedWorldPrintRegions.add("世界全体");
+      } else {
+        selectedWorldPrintRegions.delete("世界全体");
+        if (selectedWorldPrintRegions.has(region)) {
+          selectedWorldPrintRegions.delete(region);
+        } else if (selectedWorldPrintRegions.size >= 3) {
+          $("#print-message").textContent = "読みやすい1枚にするため、世界の地域は3つまでにしてください。";
+          return;
+        } else {
+          selectedWorldPrintRegions.add(region);
+        }
+      }
+      worldRegionPicker.querySelectorAll("button").forEach((item) => {
+        const selected = selectedWorldPrintRegions.has(item.dataset.worldPrintRegion);
+        item.classList.toggle("selected", selected);
+        item.setAttribute("aria-pressed", selected ? "true" : "false");
+      });
+      syncPrintPicker();
+    });
+    worldRegionPicker.append(button);
+  });
+  worldRegionPicker.querySelectorAll("button").forEach((item) => {
+    const selected = selectedWorldPrintRegions.has(item.dataset.worldPrintRegion);
+    item.classList.toggle("selected", selected);
+    item.setAttribute("aria-pressed", selected ? "true" : "false");
+  });
+
+  document.querySelectorAll("[data-print-mode]").forEach((button) => {
+    button.addEventListener("click", () => {
+      printMode = button.dataset.printMode;
+      $("#print-message").textContent = "";
+      syncPrintMode();
+    });
+  });
+  syncPrintPicker();
+  syncPrintMode();
+}
+
+function featureQuestions(regions) {
+  const correctPerRegion = regions.length === 1 ? 3 : 2;
+  const correct = regions.flatMap((region) => sample(REGION_FEATURES[region], correctPerRegion));
+  const wrongPool = JAPAN_REGIONS
+    .filter((region) => !regions.includes(region))
+    .flatMap((region) => REGION_FEATURES[region]);
+  const wrong = sample(wrongPool, regions.length === 1 ? 3 : 3);
+  return shuffle([
+    ...correct.map((text) => ({ text, correct: true })),
+    ...wrong.map((text) => ({ text, correct: false })),
+  ]);
+}
+
+function buildPrintOx(selectedPrefectures) {
+  const regions = [...new Set(selectedPrefectures.map((prefecture) => prefecture.region))];
+  const regionBuckets = shuffle(regions).map((region) => ({
+    region,
+    members: shuffle(selectedPrefectures.filter((prefecture) => prefecture.region === region)),
+    used: 0,
+  }));
+  const balancedMembers = Array.from({ length: 10 }, (_, index) => {
+    const bucket = regionBuckets[index % regionBuckets.length];
+    const prefecture = bucket.members[bucket.used % bucket.members.length];
+    bucket.used += 1;
+    return prefecture;
+  });
+  const member = (index) => balancedMembers[index];
+  const wrongRegion = (prefecture) => {
+    const preferred = JAPAN_REGION_CONFUSABLES[prefecture.region] || [];
+    return sample(preferred.length ? preferred : JAPAN_REGIONS.filter((region) => region !== prefecture.region))[0];
+  };
+  const wrongCapital = (prefecture) => {
+    const sameRegion = PREFECTURES.filter((item) => item.region === prefecture.region && item.code !== prefecture.code);
+    return sample(sameRegion.length ? sameRegion : PREFECTURES.filter((item) => item.code !== prefecture.code))[0].capital;
+  };
+  const outsiderFor = (prefecture) => {
+    const preferred = JAPAN_REGION_CONFUSABLES[prefecture.region] || [];
+    const nearby = PREFECTURES.filter((item) => preferred.includes(item.region));
+    return sample(nearby.length ? nearby : PREFECTURES.filter((item) => item.region !== prefecture.region))[0];
+  };
+
+  const p0 = member(0); const p1 = member(1); const p2 = member(2);
+  const p3 = member(3); const p4 = member(4); const p5 = member(5);
+  const p6 = member(6); const p7 = member(7); const p8 = member(8); const p9 = member(9);
+  const p2WrongRegion = wrongRegion(p2);
+  const p8Outsider = outsiderFor(p8);
+  const p9WrongRegion = wrongRegion(p9);
+  const easy = [
+    { statement: `${p0.name}は${p0.region}地方にある。`, answer: "○", correction: `${p0.name}は${p0.region}地方にある。` },
+    { statement: `${p1.name}の都道府県庁所在地は${p1.capital}である。`, answer: "○", correction: `${p1.name}の都道府県庁所在地は${p1.capital}である。` },
+    { statement: `${p2.name}は${p2WrongRegion}地方にある。`, answer: "×", correction: `${p2.name}は${p2.region}地方にある。` },
+    { statement: `${p3.region}地方には${p3.name}がある。`, answer: "○", correction: `${p3.region}地方には${p3.name}がある。` },
+    { statement: `${p4.capital}は${p4.name}の都道府県庁所在地である。`, answer: "○", correction: `${p4.capital}は${p4.name}の都道府県庁所在地である。` },
+    { statement: `${p5.name}の都道府県庁所在地は${wrongCapital(p5)}である。`, answer: "×", correction: `${p5.name}の都道府県庁所在地は${p5.capital}である。` },
   ];
-  filterInputs.forEach((id) => document.getElementById(id).addEventListener("change", updateFilterLevelNote));
-  updateFilterLevelNote();
-
-  document.querySelectorAll(".course-btn[data-course]").forEach((btn) => {
-    btn.addEventListener("click", () => startQuiz(btn.dataset.course));
-  });
-  document.getElementById("btn-next").addEventListener("click", nextQuestion);
-  document.getElementById("btn-dontknow").addEventListener("click", handleDontKnow);
-  document.getElementById("btn-finish-endless").addEventListener("click", finishQuiz);
-  document.getElementById("btn-back").addEventListener("click", goBack);
-  document.getElementById("btn-quit").addEventListener("click", () => {
-    document.getElementById("quit-modal").classList.remove("hidden");
-  });
-  document.getElementById("btn-quit-cancel").addEventListener("click", () => {
-    document.getElementById("quit-modal").classList.add("hidden");
-  });
-  document.getElementById("btn-quit-confirm").addEventListener("click", () => {
-    document.getElementById("quit-modal").classList.add("hidden");
-    switchScreen("home");
-    showHomeMessage("");
-    updateReviewButtonState();
-  });
-  document.getElementById("btn-result-review").addEventListener("click", () => startQuiz("review"));
-  document.getElementById("btn-result-again").addEventListener("click", () => {
-    if (state.lastCourse === "review" && loadWrongTickets().length === 0) {
-      // 復習対象がもうない状態で「もう一度やる」を押しても無反応にならないようにする
-      switchScreen("home");
-      showHomeMessage("👏 まちがえた問題はもうありません！");
-      updateReviewButtonState();
-      return;
-    }
-    startQuiz(state.lastCourse);
-  });
-  document.getElementById("btn-result-home").addEventListener("click", () => {
-    switchScreen("home");
-    showHomeMessage("");
-    updateReviewButtonState();
-  });
-
-  updateReviewButtonState();
+  const medium = [
+    { statement: `${p6.capital}を都道府県庁所在地とする${p6.name}は${p6.region}地方にある。`, answer: "○", correction: `${p6.capital}を都道府県庁所在地とする${p6.name}は${p6.region}地方にある。` },
+    { statement: `${p7.capital}を都道府県庁所在地とするのは${p7.name}である。`, answer: "○", correction: `${p7.capital}を都道府県庁所在地とするのは${p7.name}である。` },
+    { statement: `${p8Outsider.name}は${p8.region}地方にある。`, answer: "×", correction: `${p8Outsider.name}は${p8Outsider.region}地方にある。` },
+  ];
+  const thinking = [{
+    statement: `${p9.capital}を都道府県庁所在地とする${p9.name}は${p9WrongRegion}地方にある。`,
+    answer: "×",
+    correction: `${p9.capital}を都道府県庁所在地とする${p9.name}は${p9.region}地方にある。`,
+  }];
+  return [
+    ...shuffle(easy).map((item) => ({ ...item, level: "やさしい問題" })),
+    ...shuffle(medium).map((item) => ({ ...item, level: "少し考える問題" })),
+    ...thinking.map((item) => ({ ...item, level: "考える問題" })),
+  ];
 }
 
-document.addEventListener("DOMContentLoaded", init);
+function worksheetHeader(title, includeId = false) {
+  return `
+    <header class="print-header">
+      <div><p class="print-kicker">社会科基礎力 自習課題</p><h1${includeId ? ' id="worksheet-title"' : ""}>${title}</h1></div>
+      <p class="student-line">年　　組　　番　名前　　　　　　　　　　　　</p>
+    </header>`;
+}
+
+function balancedJapanPrintSample(prefectures, regions, count) {
+  const firstFromEachRegion = shuffle(regions)
+    .map((region) => sample(prefectures.filter((prefecture) => prefecture.region === region))[0])
+    .filter(Boolean)
+    .slice(0, count);
+  const remaining = prefectures.filter((prefecture) => !firstFromEachRegion.some((item) => item.code === prefecture.code));
+  return [...firstFromEachRegion, ...sample(remaining, Math.max(0, count - firstFromEachRegion.length))];
+}
+
+function addJapanMapNumbers(container, prefectures) {
+  const svg = container.querySelector("svg");
+  const viewBox = worldViewBox(svg);
+  if (!svg || !viewBox) return;
+  const fontSize = Math.max(32, Math.min(58, viewBox.width * 0.032));
+  prefectures.forEach((prefecture, index) => {
+    const target = container.querySelector(`[data-code="${prefecture.code}"]`);
+    let box = null;
+    try { box = target?.getBBox(); } catch { box = null; }
+    if (!box || !box.width || !box.height) return;
+    const x = box.x + box.width / 2;
+    const y = box.y + box.height / 2;
+    const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    group.setAttribute("class", "japan-map-number");
+    group.setAttribute("aria-hidden", "true");
+    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    circle.setAttribute("cx", x);
+    circle.setAttribute("cy", y);
+    circle.setAttribute("r", fontSize * 0.72);
+    const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    text.setAttribute("x", x);
+    text.setAttribute("y", y);
+    text.setAttribute("font-size", fontSize);
+    text.textContent = String(index + 1);
+    group.append(circle, text);
+    svg.append(group);
+  });
+}
+
+async function makeJapanWorksheet() {
+  const prefs = shuffle(printPrefectures());
+  const regions = selectedPrintRegions();
+  const message = $("#print-message");
+  message.textContent = "";
+  if (!prefs.length) {
+    message.textContent = "地方か都道府県を1つ以上選んでください。";
+    return;
+  }
+  if (regions.length > 3) {
+    message.textContent = "1枚を読みやすくするため、地方は3つまでにしてください。";
+    return;
+  }
+
+  const features = featureQuestions(regions);
+  const ox = buildPrintOx(prefs);
+  worksheetVersion += 1;
+  const regionTitle = `${regions.join("・")} 地図プリント（第${worksheetVersion}版）`;
+  const mapNameCount = Math.min(3, prefs.length);
+  const mapAnswerPrefs = balancedJapanPrintSample(prefs, regions, mapNameCount);
+  const capitalPrefs = balancedJapanPrintSample(prefs, regions, Math.min(3, prefs.length));
+  const prefecturePromptHtml = mapAnswerPrefs.map((prefecture, index) => `
+    <p>${index + 1}　地図の「${index + 1}」の都道府県名：<span class="answer-line"></span></p>`).join("");
+  const prefectureAnswerHtml = mapAnswerPrefs.map((prefecture, index) => `<p>${index + 1}　${prefecture.name}</p>`).join("");
+  const regionPromptStart = mapNameCount + 1;
+  const regionPromptHtml = regions.map((region, index) => `
+    <p>${regionPromptStart + index}　色${PRINT_REGION_MARKS[index]}の地方名：<span class="answer-line"></span></p>`).join("");
+  const regionAnswerHtml = regions.map((region, index) => `<p>${regionPromptStart + index}　色${PRINT_REGION_MARKS[index]}：${region}</p>`).join("");
+  const regionLegendHtml = regions.map((region, index) => `
+    <span><i style="--swatch:${JAPAN_PRINT_REGION_COLORS[index].fill}"></i>色${PRINT_REGION_MARKS[index]}</span>`).join("");
+  const capitalPromptStart = regionPromptStart + regions.length;
+  const featureInstruction = regions.length === 1
+    ? `${regions[0]}地方について書かれたものを3つ選び、記号に丸をつけよう。（3つすべて合って1問）`
+    : `${regions.join("・")}地方について書かれたものを、すべて選ぼう。（すべて合って1問）`;
+
+  const featureHtml = features.map((feature, index) => `
+    <li><span class="option-letter">${PRINT_LETTERS[index]}</span>${feature.text}</li>`).join("");
+  const oxHtml = ox.map((item, index) => `
+    ${index === 0 || ox[index - 1].level !== item.level ? `<h3 class="level-heading">＜${item.level}＞</h3>` : ""}
+    <div class="ox-question"><span>${index + 1}</span><b>○・×</b><p>${item.statement}</p><i>×なら直す：　　　　　　　　　　　　　　　　　　　　　　　　　</i></div>`).join("");
+  const answerRows = ox.map((item, index) => `
+    <tr><td>${index + 1}</td><td>${item.answer}</td><td>${item.correction}</td></tr>`).join("");
+  const correctFeatureLetters = features.map((feature, index) => feature.correct ? PRINT_LETTERS[index] : null).filter(Boolean).join("・");
+
+  const pages = $("#worksheet-pages");
+  pages.innerHTML = `
+    <article class="print-page">
+      ${worksheetHeader(regionTitle, true)}
+      <p class="print-goal"><b>【目標】</b> ${PRINT_WORDING.goal}</p>
+      <p class="print-warmup">★まず知っていること　${PRINT_WORDING.warmup || "聞いたことがある都道府県名（　　　　　　　　　）　全部知らなくてもOK"}</p>
+      <section class="print-section map-section">
+        <h2>① 地図問題</h2>
+        <p>${PRINT_WORDING.mapHint}</p>
+        <div id="worksheet-map" class="worksheet-map" aria-label="選択した都道府県を強調した日本地図"></div>
+        <div class="map-region-legend" aria-label="地図の色分け">${regionLegendHtml}</div>
+        <div class="map-prompts">
+          ${prefecturePromptHtml}
+          ${regionPromptHtml}
+          ${capitalPrefs.map((prefecture, index) => `<p>${capitalPromptStart + index}　${prefecture.name}の県庁所在地：<span class="answer-line"></span></p>`).join("")}
+        </div>
+      </section>
+      <section class="print-section feature-section">
+        <h2>② 特徴を選ぼう</h2>
+        <p>${featureInstruction}</p>
+        <ol class="feature-list">${featureHtml}</ol>
+      </section>
+    </article>
+
+    <article class="print-page">
+      ${worksheetHeader(`${regions.join("・")} ○×問題`)}
+      <section class="print-section">
+        <h2>③ ○×問題</h2>
+        <p>正しければ○、間違っていれば×。×の文は、間違いを直そう。</p>
+        <div class="ox-list">${oxHtml}</div>
+      </section>
+      <section class="print-section reflection-section">
+        <h2>④ 振り返り</h2>
+        <p>一番迷った問題（　　　　）</p>
+        <p>迷った理由　一言でOK</p>
+        <p class="writing-box"></p>
+      </section>
+    </article>
+
+    <article class="print-page answer-page">
+      ${worksheetHeader(`${regions.join("・")} 解答 自己採点用`)}
+      <section class="print-section">
+        <h2>⑤ 解答 自己採点</h2>
+        <h3>地図問題</h3>
+        ${prefectureAnswerHtml}
+        ${regionAnswerHtml}
+        ${capitalPrefs.map((prefecture, index) => `<p>${capitalPromptStart + index}　${prefecture.capital}</p>`).join("")}
+        <h3>特徴を選ぼう</h3>
+        <p>正解：${correctFeatureLetters}</p>
+        <h3>○×問題</h3>
+        <table class="answer-table"><thead><tr><th>番号</th><th>答え</th><th>正しい内容</th></tr></thead><tbody>${answerRows}</tbody></table>
+      </section>
+      <section class="print-section score-section">
+        <h2>自己採点</h2>
+        <p>正解数　　　　　問 ／ ${11 + mapNameCount + regions.length + capitalPrefs.length}問　　自己評価　○・△・×</p>
+        <p>もう一度やる問題（　　　　　　　　　　　　　　　　　）</p>
+      </section>
+      <p class="source-note">地図素材：lalamalink「ディフォルメ都道府県日本地図」CC0 1.0</p>
+    </article>`;
+
+  await japanMapReady;
+  const worksheetMap = $("#worksheet-map");
+  worksheetMap.innerHTML = japanHighlightMapElement.innerHTML;
+  paintJapanPrintRegions(worksheetMap, prefs, regions);
+  showScreen(worksheetScreen);
+  addJapanMapNumbers(worksheetMap, mapAnswerPrefs);
+}
+
+function worldPrintCountries(regions = activeWorldPrintRegions()) {
+  return isWorldPrintAll()
+    ? COUNTRIES
+    : COUNTRIES.filter((country) => regions.includes(country.region));
+}
+
+function balancedWorldSample(countries, count) {
+  const activeRegions = activeWorldPrintRegions();
+  if (activeRegions.length === 1) return sample(countries, Math.min(count, countries.length));
+  const selected = shuffle(activeRegions)
+    .map((region) => sample(countries.filter((country) => country.region === region))[0])
+    .filter(Boolean)
+    .slice(0, count);
+  const remaining = countries.filter((country) => !selected.some((item) => item.id === country.id));
+  return [...selected, ...sample(remaining, Math.max(0, count - selected.length))];
+}
+
+function buildWorldBasicQuestions(regionCountries) {
+  const countries = shuffle(regionCountries);
+  const capitalCountries = shuffle(regionCountries.filter((country) => country.capitalQuiz !== false));
+  const member = (index) => countries[index % countries.length];
+  const capitalMember = (index) => capitalCountries[index % capitalCountries.length];
+  const selectedRegions = activeWorldPrintRegions();
+  const targetRegion = sample(selectedRegions)[0];
+  const regionAnswer = sample(regionCountries.filter((country) => country.region === targetRegion))[0];
+  const nearbyRegions = WORLD_REGION_CONFUSABLES[targetRegion] || [];
+  const outsiders = COUNTRIES.filter((country) => country.region !== targetRegion);
+  const preferredOutsiders = outsiders.filter((country) => nearbyRegions.includes(country.region));
+  const pairCountry = capitalMember(2);
+  const pairAnswer = `${pairCountry.name} ― ${pairCountry.capital}`;
+  const pairDistractors = mismatchedPairs(pairCountry, COUNTRIES.filter((country) => country.capitalQuiz !== false), "name", "capital", WORLD_REGION_CONFUSABLES);
+  const preferredFor = (country, valueKey) => {
+    const regions = WORLD_REGION_CONFUSABLES[country.region] || [];
+    return COUNTRIES.filter((item) => item.id !== country.id && (item.region === country.region || regions.includes(item.region)))
+      .filter((item) => valueKey !== "capital" || item.capitalQuiz !== false)
+      .map((item) => item[valueKey]);
+  };
+  return [
+    {
+      prompt: `${capitalMember(0).name}の首都は？`, answer: capitalMember(0).capital,
+      choices: naturalChoices(capitalMember(0).capital, preferredFor(capitalMember(0), "capital"), COUNTRIES.filter((country) => country.capitalQuiz !== false).map((country) => country.capital)),
+    },
+    {
+      prompt: `${capitalMember(1).capital}は、どの国の首都？`, answer: capitalMember(1).name,
+      choices: naturalChoices(capitalMember(1).name, preferredFor(capitalMember(1), "name"), COUNTRIES.map((country) => country.name)),
+    },
+    {
+      prompt: `${member(2).name}はどの地域？`, answer: member(2).region,
+      choices: naturalChoices(member(2).region, WORLD_REGION_CONFUSABLES[member(2).region] || [], WORLD_REGIONS),
+    },
+    {
+      prompt: `${member(3).flag} この国旗はどの国？`, answer: member(3).name,
+      choices: naturalChoices(member(3).name, preferredFor(member(3), "name"), COUNTRIES.map((country) => country.name)),
+    },
+    {
+      prompt: `${targetRegion}にある国はどれ？`, answer: regionAnswer.name,
+      choices: naturalChoices(regionAnswer.name, preferredOutsiders.map((country) => country.name), outsiders.map((country) => country.name)),
+    },
+    {
+      prompt: "国と首都の正しい組み合わせは？", answer: pairAnswer,
+      choices: shuffle([pairAnswer, ...pairDistractors]),
+    },
+  ];
+}
+
+function buildWorldPrintOx(regionCountries) {
+  const countries = shuffle(regionCountries);
+  const capitalCountries = shuffle(regionCountries.filter((country) => country.capitalQuiz !== false));
+  const member = (index) => countries[index % countries.length];
+  const capitalMember = (index) => capitalCountries[index % capitalCountries.length];
+  const wrongRegion = (country) => {
+    const preferred = WORLD_REGION_CONFUSABLES[country.region] || [];
+    return sample(preferred.length ? preferred : WORLD_REGIONS.filter((region) => region !== country.region))[0];
+  };
+  const wrongCapital = (country) => {
+    const sameRegion = capitalCountries.filter((item) => item.id !== country.id);
+    const pool = sameRegion.length
+      ? sameRegion
+      : COUNTRIES.filter((item) => item.id !== country.id && item.capitalQuiz !== false);
+    return sample(pool)[0].capital;
+  };
+  const easy = [
+    { statement: `${member(0).name}は${member(0).region}にある。`, answer: "○", correction: `${member(0).name}は${member(0).region}にある。` },
+    { statement: `${capitalMember(0).name}の首都は${capitalMember(0).capital}である。`, answer: "○", correction: `${capitalMember(0).name}の首都は${capitalMember(0).capital}である。` },
+    { statement: `${member(1).name}は${wrongRegion(member(1))}にある。`, answer: "×", correction: `${member(1).name}は${member(1).region}にある。` },
+    { statement: `${member(2).flag}は${member(2).name}の国旗である。`, answer: "○", correction: `${member(2).flag}は${member(2).name}の国旗である。` },
+    { statement: `${member(3).name}は${member(3).region}の国である。`, answer: "○", correction: `${member(3).name}は${member(3).region}の国である。` },
+    { statement: `${capitalMember(1).name}の首都は${wrongCapital(capitalMember(1))}である。`, answer: "×", correction: `${capitalMember(1).name}の首都は${capitalMember(1).capital}である。` },
+  ];
+  const medium = [
+    { statement: `${capitalMember(2).capital}は${capitalMember(2).name}の首都である。`, answer: "○", correction: `${capitalMember(2).capital}は${capitalMember(2).name}の首都である。` },
+    { statement: `${capitalMember(3).name}の首都は${wrongCapital(capitalMember(3))}である。`, answer: "×", correction: `${capitalMember(3).name}の首都は${capitalMember(3).capital}である。` },
+    { statement: `${capitalMember(4).capital}を首都とする${capitalMember(4).name}は${capitalMember(4).region}にある。`, answer: "○", correction: `${capitalMember(4).capital}を首都とする${capitalMember(4).name}は${capitalMember(4).region}にある。` },
+  ];
+  const thinkingCountry = capitalMember(5);
+  const thinking = [{
+    statement: `${thinkingCountry.capital}を首都とする${thinkingCountry.name}は${wrongRegion(thinkingCountry)}にある。`,
+    answer: "×",
+    correction: `${thinkingCountry.capital}を首都とする${thinkingCountry.name}は${thinkingCountry.region}にある。`,
+  }];
+  return [
+    ...shuffle(easy).map((item) => ({ ...item, level: "やさしい問題" })),
+    ...shuffle(medium).map((item) => ({ ...item, level: "少し考える問題" })),
+    ...thinking.map((item) => ({ ...item, level: "考える問題" })),
+  ];
+}
+
+function mapTargetParts(target) {
+  if (!target) return [];
+  if (target.matches("path, polygon, circle, ellipse")) return [target];
+  const parts = [...target.querySelectorAll("path, polygon, circle, ellipse")];
+  return parts.length ? parts : [target];
+}
+
+function primaryWorldMapPart(target) {
+  const parts = mapTargetParts(target);
+  return parts.reduce((largest, part) => {
+    const rect = part.getBoundingClientRect();
+    const largestRect = largest?.getBoundingClientRect();
+    return !largest || rect.width * rect.height > largestRect.width * largestRect.height ? part : largest;
+  }, null);
+}
+
+function paintWorldPrintCountries(container, countries, color) {
+  countries.forEach((country) => {
+    const target = container.querySelector(`[id="${CSS.escape(country.mapId)}"]`);
+    mapTargetParts(target).forEach((part) => {
+      part.style.setProperty("fill", color, "important");
+      part.style.setProperty("stroke", "#334e68", "important");
+      part.style.setProperty("stroke-width", "1.4", "important");
+    });
+  });
+}
+
+function paintWorldPrintRegions(container, countries) {
+  const regions = activeWorldPrintRegions();
+  const colors = new Map(regions.map((region, index) => [region, JAPAN_PRINT_REGION_COLORS[index]]));
+  countries.forEach((country) => {
+    const target = container.querySelector(`[id="${CSS.escape(country.mapId)}"]`);
+    const color = colors.get(country.region);
+    mapTargetParts(target).forEach((part) => {
+      part.style.setProperty("fill", color?.fill || "#8fd3c7", "important");
+      part.style.setProperty("stroke", color?.stroke || "#334e68", "important");
+      part.style.setProperty("stroke-width", "1.8", "important");
+      part.style.setProperty("vector-effect", "non-scaling-stroke", "important");
+    });
+  });
+}
+
+function worldViewBox(svg) {
+  const values = (svg?.getAttribute("viewBox") || "").trim().split(/[ ,]+/).map(Number);
+  if (values.length !== 4 || values.some((value) => !Number.isFinite(value))) return null;
+  return { x: values[0], y: values[1], width: values[2], height: values[3] };
+}
+
+function worldElementBoxInSvg(svg, target) {
+  if (!svg || !target) return null;
+  const svgRect = svg.getBoundingClientRect();
+  const targetRect = target.getBoundingClientRect();
+  const viewBox = worldViewBox(svg);
+  if (!viewBox) return null;
+  if (!svgRect.width || !svgRect.height || !targetRect.width || !targetRect.height || !viewBox.width || !viewBox.height) return null;
+  const scale = Math.min(svgRect.width / viewBox.width, svgRect.height / viewBox.height);
+  const offsetX = (svgRect.width - viewBox.width * scale) / 2;
+  const offsetY = (svgRect.height - viewBox.height * scale) / 2;
+  return {
+    x: viewBox.x + (targetRect.left - svgRect.left - offsetX) / scale,
+    y: viewBox.y + (targetRect.top - svgRect.top - offsetY) / scale,
+    width: targetRect.width / scale,
+    height: targetRect.height / scale,
+  };
+}
+
+function fitWorldMapToCountries(container, countries) {
+  const svg = container.querySelector("svg");
+  if (!svg) return;
+  const boxes = countries.map((country) => {
+    const target = container.querySelector(`[id="${CSS.escape(country.mapId)}"]`);
+    return worldElementBoxInSvg(svg, primaryWorldMapPart(target));
+  }).filter((box) => box && box.width > 0 && box.height > 0);
+  if (!boxes.length) return;
+  const minX = Math.min(...boxes.map((box) => box.x));
+  const minY = Math.min(...boxes.map((box) => box.y));
+  const maxX = Math.max(...boxes.map((box) => box.x + box.width));
+  const maxY = Math.max(...boxes.map((box) => box.y + box.height));
+  const width = maxX - minX;
+  const height = maxY - minY;
+  const padX = Math.max(width * 0.18, 45);
+  const padY = Math.max(height * 0.2, 35);
+  const viewBox = [minX - padX, minY - padY, width + padX * 2, height + padY * 2];
+  svg.setAttribute("viewBox", viewBox.join(" "));
+  container.dataset.regionViewbox = viewBox.map((value) => Math.round(value)).join(" ");
+}
+
+function fitWorldPrintMap(container, countries) {
+  if (isWorldPrintAll()) return;
+  fitWorldMapToCountries(container, countries);
+}
+
+function addWorldMapNumbers(container, countries) {
+  const svg = container.querySelector("svg");
+  if (!svg) return;
+  const viewBox = worldViewBox(svg);
+  if (!viewBox) return;
+  const fontSize = Math.max(14, Math.min(54, viewBox.width * 0.03));
+  countries.forEach((country, index) => {
+    const target = container.querySelector(`[id="${CSS.escape(country.mapId)}"]`);
+    const box = worldElementBoxInSvg(svg, primaryWorldMapPart(target));
+    if (!box) return;
+    const x = box.x + box.width / 2;
+    const y = box.y + box.height / 2;
+    const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    group.setAttribute("class", "world-map-number");
+    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    circle.setAttribute("cx", x);
+    circle.setAttribute("cy", y);
+    circle.setAttribute("r", fontSize * 0.72);
+    const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    text.setAttribute("x", x);
+    text.setAttribute("y", y);
+    text.setAttribute("font-size", fontSize);
+    text.textContent = String(index + 1);
+    group.append(circle, text);
+    svg.append(group);
+  });
+}
+
+async function setupWorldWorksheetMaps(regionCountries, mapCountries) {
+  await worldMapReady;
+  const locator = $("#world-locator-map");
+  const detail = $("#world-worksheet-map");
+  [locator, detail].forEach((container) => {
+    container.innerHTML = worldMapSvgMarkup;
+    const svg = container.querySelector("svg");
+    if (svg && !svg.hasAttribute("viewBox")) svg.setAttribute("viewBox", `0 0 ${svg.getAttribute("width")} ${svg.getAttribute("height")}`);
+    svg?.setAttribute("preserveAspectRatio", "xMidYMid meet");
+    svg?.removeAttribute("width");
+    svg?.removeAttribute("height");
+  });
+  const locatorCountries = isWorldPrintAll() ? mapCountries : regionCountries;
+  if (isWorldPrintAll()) paintWorldPrintCountries(locator, locatorCountries, "#8fd3c7");
+  else paintWorldPrintRegions(locator, locatorCountries);
+  const zoomCountries = regionCountries.filter((country) => country.printPrimary !== false);
+  fitWorldPrintMap(detail, zoomCountries);
+  paintWorldPrintCountries(detail, mapCountries, "#f4a261");
+  addWorldMapNumbers(detail, mapCountries);
+}
+
+async function makeWorldWorksheet() {
+  const message = $("#print-message");
+  message.textContent = "";
+  const regionCountries = worldPrintCountries();
+  if (!regionCountries.length) {
+    message.textContent = "世界の地域を1つ以上選んでください。";
+    return;
+  }
+  const mapPool = regionCountries.filter((country) => country.mapQuiz !== false && country.printPrimary !== false);
+  const mapCountries = balancedWorldSample(mapPool, 5);
+  const capitalMapCountries = mapCountries.filter((country) => country.capitalQuiz !== false).slice(0, 2);
+  const basic = buildWorldBasicQuestions(regionCountries);
+  const ox = buildWorldPrintOx(regionCountries);
+  worksheetVersion += 1;
+  const regionLabel = worldPrintRegionLabel();
+  const title = `${regionLabel} 世界地理プリント（第${worksheetVersion}版）`;
+  const worldRegionLegend = isWorldPrintAll() ? "" : `
+    <div class="world-region-legend">${activeWorldPrintRegions().map((region, index) => `
+      <span><i style="--swatch:${JAPAN_PRINT_REGION_COLORS[index].fill}"></i>${region}</span>`).join("")}</div>`;
+
+  const mapPromptHtml = mapCountries.map((country, index) => `
+    <p>${index + 1}　地図の「${index + 1}」の国名：<span class="answer-line"></span></p>`).join("");
+  const capitalPromptHtml = capitalMapCountries.map((country, index) => `
+    <p>${mapCountries.length + index + 1}　${country.name}の首都：<span class="answer-line"></span></p>`).join("");
+  const basicHtml = basic.map((question, index) => `
+    <div class="world-basic-question">
+      <p><b>${index + 1}</b>　${question.prompt}</p>
+      <div>${question.choices.map((choice, choiceIndex) => `<span>${PRINT_LETTERS[choiceIndex]}　${choice}</span>`).join("")}</div>
+    </div>`).join("");
+  const oxHtml = ox.map((item, index) => `
+    ${index === 0 || ox[index - 1].level !== item.level ? `<h3 class="level-heading">＜${item.level}＞</h3>` : ""}
+    <div class="ox-question"><span>${index + 1}</span><b>○・×</b><p>${item.statement}</p><i>×なら直す：　　　　　　　　　　　　　　　　　　　　　　　　　</i></div>`).join("");
+  const basicAnswerRows = basic.map((question, index) => {
+    const answerIndex = question.choices.indexOf(question.answer);
+    return `<tr><td>${index + 1}</td><td>${PRINT_LETTERS[answerIndex]}</td><td>${question.answer}</td></tr>`;
+  }).join("");
+  const oxAnswerRows = ox.map((item, index) => `
+    <tr><td>${index + 1}</td><td>${item.answer}</td><td>${item.correction}</td></tr>`).join("");
+  const totalQuestions = mapCountries.length + capitalMapCountries.length + basic.length + ox.length;
+
+  $("#worksheet-pages").innerHTML = `
+    <article class="print-page world-map-page">
+      ${worksheetHeader(title, true)}
+      <p class="print-goal"><b>【目標】</b> ${WORLD_PRINT_WORDING.goal}</p>
+      <p class="print-warmup">★まず知っていること　${WORLD_PRINT_WORDING.warmup || "聞いたことがある国名（　　　　　　　　　）　全部知らなくてもOK"}</p>
+      <section class="print-section">
+        <h2>① 地図問題</h2>
+        <p>${WORLD_PRINT_WORDING.mapHint}</p>
+        <div class="world-map-stack">
+          <figure class="world-locator-figure"><figcaption>${isWorldPrintAll() ? "世界全体の位置を確認" : "どのあたり？　色の部分が今回の地域"}</figcaption><div id="world-locator-map" class="world-map world-print-map locator-map"></div>${worldRegionLegend}</figure>
+          <figure class="world-detail-figure"><figcaption>${isWorldPrintAll() ? "世界全図" : `${regionLabel}と周辺の拡大図`}</figcaption><div id="world-worksheet-map" class="world-map world-print-map detail-map"></div></figure>
+        </div>
+        <div class="world-map-prompts">${mapPromptHtml}${capitalPromptHtml}</div>
+      </section>
+    </article>
+
+    <article class="print-page world-basic-page">
+      ${worksheetHeader(`${regionLabel} 基本問題`)}
+      <section class="print-section">
+        <h2>② 基本問題</h2>
+        <p>正しいものを1つ選び、記号に丸をつけよう。予想でもOK。</p>
+        <div class="world-basic-list">${basicHtml}</div>
+      </section>
+      <p class="print-cheer">全部分からなくても大丈夫。地図や選択肢を見て、まず1つ選ぼう。</p>
+    </article>
+
+    <article class="print-page">
+      ${worksheetHeader(`${regionLabel} ○×問題`)}
+      <section class="print-section">
+        <h2>③ ○×問題</h2>
+        <p>正しければ○、間違っていれば×。×の文は、間違いを直そう。</p>
+        <div class="ox-list">${oxHtml}</div>
+      </section>
+      <section class="print-section reflection-section">
+        <h2>④ 振り返り</h2>
+        <p>一番迷った問題（　　　　）</p>
+        <p>迷った理由　一言でOK</p>
+        <p class="writing-box"></p>
+      </section>
+    </article>
+
+    <article class="print-page answer-page world-answer-page">
+      ${worksheetHeader(`${regionLabel} 解答 自己採点用`)}
+      <section class="print-section">
+        <h2>⑤ 解答 自己採点</h2>
+        <h3>地図問題</h3>
+        <div class="compact-answer-grid">
+          ${mapCountries.map((country, index) => `<p>${index + 1}　${country.name}</p>`).join("")}
+          ${capitalMapCountries.map((country, index) => `<p>${mapCountries.length + index + 1}　${country.capital}</p>`).join("")}
+        </div>
+        <h3>基本問題</h3>
+        <table class="answer-table"><thead><tr><th>番号</th><th>記号</th><th>答え</th></tr></thead><tbody>${basicAnswerRows}</tbody></table>
+        <h3>○×問題</h3>
+        <table class="answer-table"><thead><tr><th>番号</th><th>答え</th><th>正しい内容</th></tr></thead><tbody>${oxAnswerRows}</tbody></table>
+      </section>
+      <section class="print-section score-section">
+        <h2>自己採点</h2>
+        <p>正解数　　　　　問 ／ ${totalQuestions}問　　自己評価　○・△・×</p>
+        <p>もう一度やる問題（　　　　　　　　　　　　　　　　　）</p>
+      </section>
+      <p class="source-note">世界地図素材：Wikimedia Commons「Blank map of the world」CC0 1.0</p>
+    </article>`;
+
+  showScreen(worksheetScreen);
+  await setupWorldWorksheetMaps(regionCountries, mapCountries);
+}
+
+function makeWorksheet() {
+  return printMode === "world" ? makeWorldWorksheet() : makeJapanWorksheet();
+}
+
+document.addEventListener("keydown", (event) => {
+  if (quizScreen.classList.contains("hidden") || locked) return;
+  const index = Number(event.key) - 1;
+  const buttons = [...document.querySelectorAll(".choice-button")];
+  if (index >= 0 && index < buttons.length) buttons[index].click();
+});
+
+startButton.addEventListener("click", startFromSetup);
+retryButton.addEventListener("click", retryWrong);
+homeButton.addEventListener("click", goHome);
+$("#unknown-button").addEventListener("click", () => answerQuestion(null, { skipped: true }));
+$("#quit-quiz-button").addEventListener("click", showResults);
+$("#leave-quiz-button").addEventListener("click", () => {
+  if (window.confirm("クイズをやめてトップへ戻りますか？")) goHome();
+});
+$("#repeat-button").addEventListener("click", () => {
+  if (lastCourseConfig) startCourse(lastCourseConfig.course, lastCourseConfig.scopes, lastCourseConfig.filters);
+});
+document.querySelectorAll("[data-quick-course]").forEach((button) => {
+  button.addEventListener("click", () => startQuickCourse(button.dataset.quickCourse));
+});
+$("#open-quiz-button").addEventListener("click", () => showScreen(setupScreen));
+$("#open-print-button").addEventListener("click", () => showScreen(printSetupScreen));
+document.querySelectorAll("[data-go-home]").forEach((button) => button.addEventListener("click", goHome));
+$("#make-print-button").addEventListener("click", makeWorksheet);
+$("#remake-print-button").addEventListener("click", makeWorksheet);
+$("#edit-print-button").addEventListener("click", () => showScreen(printSetupScreen));
+$("#print-button").addEventListener("click", () => window.print());
+[...JAPAN_REGIONS].forEach((region) => $("#japan-region-filter").add(new Option(region, region)));
+[...WORLD_REGIONS].forEach((region) => $("#world-region-filter").add(new Option(region, region)));
+setupPrintPicker();
+updateReviewCount();

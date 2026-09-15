@@ -78,9 +78,9 @@ const WORKSHEET_KIND = {
     regionView: JAPAN_REGION_VIEW,
     fullViewKey: "全国",
     areaWord: "地方",
-    unitWord: "県",
-    itemWord: "県",
-    capitalWord: "県庁所在地",
+    unitWord: "都道府県",
+    itemWord: "都道府県",
+    capitalWord: "都道府県庁所在地",
     mapMode: "japan",
   },
   world: {
@@ -411,11 +411,12 @@ function isFullRegionUnion(kindDef, items, coveredRegions) {
 function buildWorksheet(kindKey, items, forceFullView) {
   const kindDef = WORKSHEET_KIND[kindKey];
   const coveredRegions = Array.from(new Set(items.map((it) => it.region)));
+  // 「地方・地域をまるごと選んだか」を、地方・地域が1つだけかどうかより先に判定する。
+  // （先に coveredRegions.length===1 を見てしまうと、同じ地方の一部だけを
+  // 　個別選択した場合でも地方名になってしまっていたため）
   const areaName =
     forceFullView || items.length === kindDef.pool.length
       ? kindDef.fullViewKey
-      : coveredRegions.length === 1
-      ? coveredRegions[0]
       : isFullRegionUnion(kindDef, items, coveredRegions)
       ? coveredRegions.join("・")
       : items.map((it) => it.name).join("・");
@@ -720,10 +721,22 @@ function init() {
   document.getElementById("world-region-generate-btn").addEventListener("click", () => generateForRegions("world"));
 
   document.getElementById("jp-custom-btn").addEventListener("click", () => {
-    generateFor("jp", getItemsByIds("jp", getCheckedIds("jp")));
+    const ids = getCheckedIds("jp");
+    if (ids.length === 0) {
+      showSelectMessage("jp", "都道府県を1つ以上選んでください");
+      return;
+    }
+    showSelectMessage("jp", "");
+    generateFor("jp", getItemsByIds("jp", ids));
   });
   document.getElementById("world-custom-btn").addEventListener("click", () => {
-    generateFor("world", getItemsByIds("world", getCheckedIds("world")));
+    const ids = getCheckedIds("world");
+    if (ids.length === 0) {
+      showSelectMessage("world", "国を1つ以上選んでください");
+      return;
+    }
+    showSelectMessage("world", "");
+    generateFor("world", getItemsByIds("world", ids));
   });
 
   document.getElementById("btn-print").addEventListener("click", () => printSheet("all"));

@@ -249,7 +249,7 @@ function genJpMapToRegion(forcedItem) {
 function genJpMapToCapital(forcedItem) {
   const pref = forcedItem || pickBalancedJpItem();
   const wrongs = pickMixedDecoys(JAPAN_PREFECTURES, pref, 3).map((p) => p.capital);
-  return makeChoiceQuestion("jpMap", "地図で色がついている都道府県の県庁所在地は？", pref.capital, wrongs, {
+  return makeChoiceQuestion("jpMap", "地図で色がついている都道府県の都道府県庁所在地は？", pref.capital, wrongs, {
     mapMode: "japan",
     mapHighlight: pref.id,
     itemIds: [pref.id],
@@ -263,8 +263,8 @@ function genJpMapCapitalCheck(forcedItem) {
   const pref = forcedItem || pickBalancedJpItem();
   const isTrue = Math.random() < 0.5;
   const shown = isTrue ? pref.capital : pickMaruBatsuDonor(JAPAN_PREFECTURES, pref).capital;
-  const statement = `地図で色がついている都道府県の県庁所在地は「${shown}」である`;
-  return makeTrueFalseQuestion("jpMap", statement, isTrue, `${pref.name}の県庁所在地は${pref.capital}`, {
+  const statement = `地図で色がついている都道府県の都道府県庁所在地は「${shown}」である`;
+  return makeTrueFalseQuestion("jpMap", statement, isTrue, `${pref.name}の都道府県庁所在地は${pref.capital}`, {
     mapMode: "japan",
     mapHighlight: pref.id,
     itemIds: [pref.id],
@@ -282,7 +282,7 @@ function genJpRegionToPref() {
   const inRegion = JAPAN_PREFECTURES.filter((p) => p.region === region);
   const correct = randomItem(inRegion);
   const wrongs = sampleExcluding(JAPAN_PREFECTURES, (p) => p.region === region, 3).map((p) => p.name);
-  return makeChoiceQuestion("jpRegion", `${region}にある県はどれ？`, correct.name, wrongs, { itemIds: [correct.id] });
+  return makeChoiceQuestion("jpRegion", `${region}にある都道府県はどれ？`, correct.name, wrongs, { itemIds: [correct.id] });
 }
 
 function genJpRegionNotIn() {
@@ -292,7 +292,7 @@ function genJpRegionNotIn() {
   if (inRegion.length < 3) return null; // 北海道など県が少ない地方はスキップ
   const decoys = sampleN(inRegion, 3).map((p) => p.name);
   const correct = randomItem(outRegion);
-  return makeChoiceQuestion("jpRegion", `${region}に「ない」県はどれ？`, correct.name, decoys, { itemIds: [correct.id] });
+  return makeChoiceQuestion("jpRegion", `${region}に「ない」都道府県はどれ？`, correct.name, decoys, { itemIds: [correct.id] });
 }
 
 function genJpRegionMaruBatsu(forcedItem) {
@@ -330,7 +330,7 @@ function genJpRegionToCapital(forcedItem) {
   const inRegion = JAPAN_PREFECTURES.filter((p) => p.region === region);
   const correct = forcedItem && forcedItem.region === region ? forcedItem : randomItem(inRegion);
   const wrongs = sampleExcluding(JAPAN_PREFECTURES, (p) => p.region === region, 3).map((p) => p.capital);
-  return makeChoiceQuestion("jpRegion", `次のうち${region}地方の県庁所在地はどれ？`, correct.capital, wrongs, {
+  return makeChoiceQuestion("jpRegion", `次のうち${region}地方の都道府県庁所在地はどれ？`, correct.capital, wrongs, {
     itemIds: [correct.id],
   });
 }
@@ -338,7 +338,7 @@ function genJpRegionToCapital(forcedItem) {
 function genJpCapitalToRegion(forcedItem) {
   const pref = forcedItem || pickBalancedJpItem();
   const wrongs = sampleExcluding(JAPAN_REGIONS, (r) => r === pref.region, 3);
-  return makeChoiceQuestion("jpCapital", `県庁所在地が${pref.capital}の県は、何地方？`, pref.region, wrongs, {
+  return makeChoiceQuestion("jpCapital", `都道府県庁所在地が${pref.capital}の都道府県は、何地方？`, pref.region, wrongs, {
     itemIds: [pref.id],
   });
 }
@@ -346,7 +346,7 @@ function genJpCapitalToRegion(forcedItem) {
 function genJpPrefToCapital(forcedItem) {
   const pref = forcedItem || pickBalancedJpItem();
   const wrongs = pickMixedDecoys(JAPAN_PREFECTURES, pref, 3).map((p) => p.capital);
-  return makeChoiceQuestion("jpCapital", `${pref.name}の県庁所在地は？`, pref.capital, wrongs, { itemIds: [pref.id] });
+  return makeChoiceQuestion("jpCapital", `${pref.name}の都道府県庁所在地は？`, pref.capital, wrongs, { itemIds: [pref.id] });
 }
 
 // 「県庁所在地→県」の逆読み。県名と県庁所在地がほぼ同じ県だと、
@@ -355,15 +355,15 @@ function genJpCapitalToPref(forcedItem) {
   const pref = forcedItem || pickBalancedNonObviousJpItem();
   if (!pref || isJpCapitalObvious(pref)) return null;
   const wrongs = pickMixedDecoys(JAPAN_PREFECTURES, pref, 3).map((p) => p.name);
-  return makeChoiceQuestion("jpCapital", `県庁所在地が${pref.capital}なのはどこ？`, pref.name, wrongs, { itemIds: [pref.id] });
+  return makeChoiceQuestion("jpCapital", `都道府県庁所在地が${pref.capital}なのはどこ？`, pref.name, wrongs, { itemIds: [pref.id] });
 }
 
 function genJpCapitalMaruBatsu(forcedItem) {
   const pref = forcedItem || pickBalancedJpItem();
   const isTrue = Math.random() < 0.5;
   const shown = isTrue ? pref.capital : pickMaruBatsuDonor(JAPAN_PREFECTURES, pref).capital;
-  const statement = `${pref.name}の県庁所在地は「${shown}」である`;
-  return makeTrueFalseQuestion("jpCapital", statement, isTrue, `${pref.name}の県庁所在地は${pref.capital}`, {
+  const statement = `${pref.name}の都道府県庁所在地は「${shown}」である`;
+  return makeTrueFalseQuestion("jpCapital", statement, isTrue, `${pref.name}の都道府県庁所在地は${pref.capital}`, {
     itemIds: [pref.id],
   });
 }
@@ -371,12 +371,12 @@ function genJpCapitalMaruBatsu(forcedItem) {
 function genJpCapitalNameMatch(forcedItem) {
   const pref = forcedItem || pickBalancedJpItem();
   const same = stripAreaSuffix(pref.name) === stripCitySuffix(pref.capital);
-  const statement = `${pref.name}の県庁所在地は、県名と同じ漢字で書く`;
+  const statement = `${pref.name}の都道府県庁所在地は、都道府県名と同じ漢字で書く`;
   return makeTrueFalseQuestion(
     "jpCapital",
     statement,
     same,
-    same ? `${pref.name}の県庁所在地は県名と同じ` : `${pref.name}の県庁所在地は${pref.capital}`,
+    same ? `${pref.name}の都道府県庁所在地は都道府県名と同じ` : `${pref.name}の都道府県庁所在地は${pref.capital}`,
     { itemIds: [pref.id] }
   );
 }
@@ -396,7 +396,7 @@ function genJpCapitalPairWrong(forcedItem) {
   const choices = group.map((p) => (p.id === wrongOne.id ? `${p.name} － ${donor.capital}` : `${p.name} － ${p.capital}`));
   const correctLabel = `${wrongOne.name} － ${donor.capital}`;
   const wrongLabels = choices.filter((c) => c !== correctLabel);
-  return makeChoiceQuestion("jpCapital", "県と県庁所在地の組み合わせで、まちがっているものはどれ？", correctLabel, wrongLabels, {
+  return makeChoiceQuestion("jpCapital", "都道府県と都道府県庁所在地の組み合わせで、まちがっているものはどれ？", correctLabel, wrongLabels, {
     itemIds: [wrongOne.id],
   });
 }
@@ -420,7 +420,7 @@ function genJpCapitalPairRight(forcedItem) {
   });
   const correctLabel = `${rightOne.name} － ${rightOne.capital}`;
   const wrongLabels = choices.filter((c) => c !== correctLabel);
-  return makeChoiceQuestion("jpCapital", "県と県庁所在地の正しい組み合わせはどれ？", correctLabel, wrongLabels, {
+  return makeChoiceQuestion("jpCapital", "都道府県と都道府県庁所在地の正しい組み合わせはどれ？", correctLabel, wrongLabels, {
     itemIds: [rightOne.id],
   });
 }
@@ -676,18 +676,19 @@ function genWorldFlagMaruBatsu(forcedItem) {
 }
 
 // =========================================================
-// テンプレート一覧（日本15種類＋世界20種類 = 35種類）
+// テンプレート一覧（日本18種類＋世界22種類 = 40種類）
 // level: easy / medium / hard
 // forceable: true なら「この県・国について出して」と指定できる
 //            （まちがえた問題の再出題・復習で使う）
 // requires: この問題を出すために必要な出題範囲チェック
-// factKind: 「わからない」を押したときに出す一言（region/capital/flag）が
-//           実際に聞かれている内容と合うようにするための印
+// factKind: 「わからない」を押したときに出す一言や、まちがえた問題の復習で
+//           「同じ種類の知識」を出し分けるための印（location/region/capital/flag）。
+//           location＝地図上の位置そのもの（何地方かではなく、位置を当てる問題）
 // =========================================================
 const TEMPLATES = [
   // ---- 日本地理 ----
-  { name: "jpMapToName", kind: "jp", category: "jpMap", level: "easy", forceable: true, requires: ["jpMap"], factKind: "region", fn: genJpMapToName },
-  { name: "jpNameToMap", kind: "jp", category: "jpMap", level: "easy", forceable: true, requires: ["jpMap"], factKind: "region", fn: genJpNameToMap },
+  { name: "jpMapToName", kind: "jp", category: "jpMap", level: "easy", forceable: true, requires: ["jpMap"], factKind: "location", fn: genJpMapToName },
+  { name: "jpNameToMap", kind: "jp", category: "jpMap", level: "easy", forceable: true, requires: ["jpMap"], factKind: "location", fn: genJpNameToMap },
   { name: "jpMapToRegion", kind: "jp", category: "jpMap", level: "medium", forceable: true, requires: ["jpMap", "jpRegion"], factKind: "region", fn: genJpMapToRegion },
   { name: "jpMapToCapital", kind: "jp", category: "jpMap", level: "medium", forceable: true, requires: ["jpMap", "jpCapital"], factKind: "capital", fn: genJpMapToCapital },
   { name: "jpMapCapitalCheck", kind: "jp", category: "jpMap", level: "hard", forceable: true, requires: ["jpMap", "jpCapital"], factKind: "capital", fn: genJpMapCapitalCheck },
@@ -706,8 +707,8 @@ const TEMPLATES = [
   { name: "jpCapitalPairRight", kind: "jp", category: "jpCapital", level: "hard", forceable: true, requires: ["jpCapital"], factKind: "capital", fn: genJpCapitalPairRight },
 
   // ---- 世界地理 ----
-  { name: "worldMapToName", kind: "world", category: "worldMap", level: "easy", forceable: true, requires: ["worldMap"], factKind: "region", fn: genWorldMapToName },
-  { name: "worldMapClick", kind: "world", category: "worldMap", level: "easy", forceable: true, requires: ["worldMap"], factKind: "region", fn: genWorldMapClick },
+  { name: "worldMapToName", kind: "world", category: "worldMap", level: "easy", forceable: true, requires: ["worldMap"], factKind: "location", fn: genWorldMapToName },
+  { name: "worldMapClick", kind: "world", category: "worldMap", level: "easy", forceable: true, requires: ["worldMap"], factKind: "location", fn: genWorldMapClick },
   { name: "worldMapToRegion", kind: "world", category: "worldMap", level: "medium", forceable: true, requires: ["worldMap"], factKind: "region", fn: genWorldMapToRegion },
   { name: "worldMapToCapital", kind: "world", category: "worldMap", level: "medium", forceable: true, requires: ["worldMap", "worldCapital"], factKind: "capital", fn: genWorldMapToCapital },
   { name: "worldCountryToRegion", kind: "world", category: "worldMap", level: "easy", forceable: true, requires: ["worldMap"], factKind: "region", fn: genWorldCountryToRegion },
@@ -1055,7 +1056,7 @@ function factLineFor(q) {
   if (!item) return "";
   // factKind で「実際に聞かれていた内容」に合わせた一言を選ぶ
   if (q.factKind === "capital") {
-    return q.kind === "jp" ? `${item.name}の県庁所在地は${item.capital}です。` : `${item.name}の首都は${item.capital}です。`;
+    return q.kind === "jp" ? `${item.name}の都道府県庁所在地は${item.capital}です。` : `${item.name}の首都は${item.capital}です。`;
   }
   // 国旗の画像は正解表示（reveal-correct）や上部の表示ですでに見えているので、
   // 一言メモでは絵文字を埋め込まず、国名だけを文章で伝える

@@ -330,11 +330,24 @@
   #app { max-width: none; padding: 0; }
   #sheet-paper { box-shadow: none; padding: 0; }
   /* 縦長の地方（東北など）で高さが際限なく伸びて複数ページに分裂しないよう、
-     幅ではなく「高さの上限」を基準にする（幅は自動で縮む） */
-  .sheet-map { break-inside: avoid; page-break-inside: avoid; }
-  .sheet-map svg { max-width: 100%; max-height: 16cm; width: auto; height: auto; min-height: 0; }
+     幅ではなく「高さの上限」を基準にする（幅は自動で縮む）。
+     「授業中・自習時にすぐ印刷して渡せる教材」という目的のため、
+     地図・余白を screen-preview より詰めて、1地方程度なら問題編が
+     A4 2ページ以内におさまることを目安にしている（読みにくくなるほど
+     詰めすぎないよう、文字サイズは変えていない）。 */
+  .sheet-map { break-inside: avoid; page-break-inside: avoid; margin-bottom: 4px; }
+  .sheet-map svg { max-width: 100%; max-height: 11.5cm; width: auto; height: auto; min-height: 0; }
   /* 白黒コピーでも下地（#e5e7eb）とはっきり区別できるよう、濃いグレーにする */
   .sheet-map svg path.target { fill: #6b7280; }
+
+  /* 印刷全体の行間・見出し・各行の余白を、画面プレビューより少し詰める */
+  #sheet-paper { line-height: 1.4; }
+  .sheet-section-title { margin: 10px 0 4px; }
+  .sheet-name-row, .sheet-goal, .sheet-warmup-title, .sheet-warmup-q,
+  .sheet-instruction, .sheet-reflect, .answer-line { margin: 3px 0; }
+  .sheet-warmup-choices { margin: 4px 0 8px; }
+  .q-line { margin: 2px 0; }
+  .sheet-divider { margin: 10px 0; }
 
   /* 見出しや1行1行が、ページの境目で中途半端に分割されないようにする */
   .sheet-section-title { break-after: avoid; page-break-after: avoid; }

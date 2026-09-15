@@ -8,8 +8,8 @@
 //
 // name     : 国名
 // capital  : 首都
-// flag     : 国旗（絵文字。画像を使わないので読み込みが軽い）
-// region   : 地域区分（東アジア/東南アジア/南アジア/ヨーロッパ/北アメリカ/南アメリカ/アフリカ/オセアニア）
+// flag     : 国旗（絵文字。画像を使わないので読み込みが軽い。実際の表示は assets/flags/ のSVG画像を使用）
+// region   : 地域区分（東アジア/東南アジア/南アジア/西アジア/ヨーロッパ/北アメリカ/南アメリカ/アフリカ/オセアニア）
 
 const WORLD_COUNTRIES = [
   // 東アジア
@@ -30,6 +30,11 @@ const WORLD_COUNTRIES = [
   { id: "in", name: "インド", capital: "ニューデリー", flag: "🇮🇳", region: "南アジア" },
   { id: "pk", name: "パキスタン", capital: "イスラマバード", flag: "🇵🇰", region: "南アジア" },
   { id: "bd", name: "バングラデシュ", capital: "ダッカ", flag: "🇧🇩", region: "南アジア" },
+
+  // 西アジア
+  { id: "sa", name: "サウジアラビア", capital: "リヤド", flag: "🇸🇦", region: "西アジア" },
+  { id: "tr", name: "トルコ", capital: "アンカラ", flag: "🇹🇷", region: "西アジア" },
+  { id: "ir", name: "イラン", capital: "テヘラン", flag: "🇮🇷", region: "西アジア" },
 
   // ヨーロッパ
   { id: "gb", name: "イギリス", capital: "ロンドン", flag: "🇬🇧", region: "ヨーロッパ" },
@@ -65,6 +70,6 @@ const WORLD_COUNTRIES = [
 ];
 
 const WORLD_REGIONS = [
-  "東アジア", "東南アジア", "南アジア", "ヨーロッパ",
+  "東アジア", "東南アジア", "南アジア", "西アジア", "ヨーロッパ",
   "北アメリカ", "南アメリカ", "アフリカ", "オセアニア",
 ];

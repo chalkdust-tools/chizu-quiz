@@ -308,9 +308,12 @@ h2 {
   stroke-width: 1;
 }
 
-/* 出題対象ではない国・地域（背景として位置関係を見せるためだけの国） */
+/* 出題対象ではない国・地域（背景として位置関係を見せるためだけの国）。
+   地図の背景色（.mapwrap の #eaf2fb）とほぼ同じ色だと、国の形が
+   ほとんど見えなくなってしまうため、はっきり区別できる色にしている。
+   （特にアフリカ・西アジアのように対象国が少ない地域で目立つ問題だった） */
 .mapwrap svg path.bg-country {
-  fill: #eef1f4;
+  fill: #dde3ea;
   stroke: #ffffff;
   stroke-width: 0.5;
   cursor: default;

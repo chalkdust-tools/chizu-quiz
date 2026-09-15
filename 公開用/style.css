@@ -1,0 +1,524 @@
+/* 全体設定：文字を大きめに、タッチ操作しやすいボタンを意識 */
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #f4f6f8;
+  color: #1f2937;
+  font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", "Meiryo", system-ui, sans-serif;
+  font-size: 18px;
+  line-height: 1.6;
+}
+
+#app {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 16px 16px 40px;
+}
+
+h1 {
+  font-size: 1.5rem;
+  text-align: center;
+  margin: 12px 0 4px;
+}
+
+h2 {
+  font-size: 1.1rem;
+  margin: 0 0 10px;
+}
+
+.lead {
+  text-align: center;
+  color: #4b5563;
+  margin-top: 0;
+}
+
+.hidden { display: none !important; }
+
+/* --- ホーム画面 --- */
+.box {
+  background: #ffffff;
+  border-radius: 14px;
+  padding: 16px;
+  margin-bottom: 16px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+}
+
+.check-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.check-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  background: #f1f5f9;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 1rem;
+}
+
+.check-item input {
+  width: 20px;
+  height: 20px;
+}
+
+.course-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.course-btn {
+  font-size: 1.05rem;
+  padding: 16px 10px;
+  border: none;
+  border-radius: 12px;
+  background: #2563eb;
+  color: white;
+  cursor: pointer;
+  font-weight: bold;
+}
+
+.course-btn:disabled {
+  background: #cbd5e1;
+  color: #6b7280;
+  cursor: not-allowed;
+}
+
+.course-btn.secondary {
+  background: #6b7280;
+}
+
+.message {
+  text-align: center;
+  color: #dc2626;
+  font-weight: bold;
+  min-height: 1.5em;
+}
+
+.hint {
+  font-size: 0.85rem;
+  color: #6b7280;
+  margin: -4px 0 12px;
+}
+
+.custom-box {
+  margin-top: 10px;
+  border-top: 1px dashed #d1d5db;
+  padding-top: 10px;
+}
+
+.custom-box summary {
+  cursor: pointer;
+  font-weight: bold;
+  color: #374151;
+}
+
+.filter-row {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.filter-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.9rem;
+  color: #374151;
+}
+
+.filter-row select {
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid #d1d5db;
+  font-size: 1rem;
+}
+
+.region-multi-label {
+  margin: 4px 0 2px;
+  font-size: 0.9rem;
+  color: #374151;
+  font-weight: bold;
+}
+
+.region-check-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.region-check-item {
+  padding: 6px 8px;
+  font-size: 0.85rem;
+}
+
+.filter-note {
+  font-size: 0.78rem;
+  color: #9ca3af;
+  margin: 2px 0 0;
+}
+
+.credit {
+  text-align: center;
+  color: #9ca3af;
+  font-size: 0.75rem;
+  margin-top: 24px;
+}
+
+.credit a { color: #9ca3af; }
+
+/* --- クイズ画面 --- */
+.quiz-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.toolbar-btn {
+  flex: 1;
+  padding: 12px 6px;
+  font-size: 0.95rem;
+  font-weight: bold;
+  border: 2px solid #d1d5db;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #374151;
+  cursor: pointer;
+}
+
+.toolbar-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.toolbar-btn.quit {
+  color: #991b1b;
+  border-color: #fca5a5;
+}
+
+.quiz-header {
+  display: flex;
+  justify-content: space-between;
+  font-weight: bold;
+  color: #374151;
+  margin-bottom: 8px;
+  font-size: 1rem;
+}
+
+/* --- クイズをやめる確認モーダル --- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(17, 24, 39, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 100;
+}
+
+.modal-box {
+  background: #ffffff;
+  border-radius: 14px;
+  padding: 24px 20px;
+  max-width: 360px;
+  width: 100%;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+}
+
+.modal-message {
+  text-align: center;
+  font-size: 1.1rem;
+  font-weight: bold;
+  margin: 0 0 18px;
+}
+
+.modal-buttons {
+  display: grid;
+  gap: 10px;
+}
+
+.prompt {
+  font-size: 1.4rem;
+  font-weight: bold;
+  text-align: center;
+  padding: 20px 8px;
+  background: #ffffff;
+  border-radius: 14px;
+  margin-bottom: 14px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+}
+
+/* 国旗は絵文字だと環境によって「JP」のような文字表示になってしまうことがあるため、
+   assets/flags/ に保存した本物のSVG画像ファイルを <img> で表示している */
+.flag-display {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 14px;
+}
+
+.flag-img {
+  width: 180px;
+  height: auto;
+  aspect-ratio: 4 / 3;
+  object-fit: contain;
+  border-radius: 6px;
+  box-shadow: 0 1px 6px rgba(0,0,0,0.25);
+  background: #f3f4f6;
+}
+
+/* 画像が読み込めなかったときのフォールバック表示 */
+.flag-fallback {
+  display: inline-block;
+  padding: 10px 16px;
+  border: 2px dashed #9ca3af;
+  border-radius: 8px;
+  background: #f3f4f6;
+  color: #4b5563;
+  font-size: 0.95rem;
+  font-weight: bold;
+}
+
+.mapwrap {
+  background: #eaf2fb;
+  border-radius: 14px;
+  padding: 8px;
+  margin-bottom: 14px;
+  display: flex;
+  justify-content: center;
+}
+
+.mapwrap svg {
+  width: 100%;
+  max-height: 70vh;
+  height: auto;
+}
+
+.mapwrap svg path {
+  fill: #cbd5e1;
+  stroke: #ffffff;
+  stroke-width: 1;
+}
+
+/* 出題対象ではない国・地域（背景として位置関係を見せるためだけの国）。
+   地図の背景色（.mapwrap の #eaf2fb）とほぼ同じ色だと、国の形が
+   ほとんど見えなくなってしまうため、はっきり区別できる色にしている。
+   （特にアフリカ・西アジアのように対象国が少ない地域で目立つ問題だった） */
+.mapwrap svg path.bg-country {
+  fill: #dde3ea;
+  stroke: #ffffff;
+  stroke-width: 0.5;
+  cursor: default;
+  pointer-events: none;
+}
+
+.map-error {
+  padding: 40px 12px;
+  text-align: center;
+  color: #991b1b;
+  font-weight: bold;
+  background: #fee2e2;
+  border-radius: 8px;
+  width: 100%;
+}
+
+/* タップできるときは境界線を太くして、小さい県も押しやすくする */
+.mapwrap svg.clickable path {
+  stroke-width: 1.5;
+}
+
+.mapwrap svg path.highlight {
+  fill: #f59e0b;
+}
+
+.mapwrap svg.clickable path {
+  cursor: pointer;
+}
+
+.mapwrap svg.clickable path:hover {
+  fill: #93c5fd;
+}
+
+.mapwrap svg path.correct {
+  fill: #22c55e;
+}
+
+.mapwrap svg path.wrong {
+  fill: #ef4444;
+}
+
+.mapwrap svg path.reveal-correct {
+  fill: #22c55e;
+  stroke: #166534;
+  stroke-width: 2;
+}
+
+.choices {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.choice-btn {
+  font-size: 1.1rem;
+  padding: 18px 8px;
+  border: 2px solid #d1d5db;
+  border-radius: 12px;
+  background: #ffffff;
+  cursor: pointer;
+  font-weight: bold;
+  color: #1f2937;
+}
+
+.choice-btn.flag-choice {
+  padding: 14px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.choice-btn.flag-choice .flag-choice-img {
+  width: 100%;
+  max-width: 110px;
+  height: auto;
+  aspect-ratio: 4 / 3;
+  object-fit: contain;
+  border-radius: 4px;
+  background: #f3f4f6;
+}
+
+.choice-btn.flag-choice .flag-fallback {
+  font-size: 0.8rem;
+  padding: 6px 10px;
+}
+
+.choice-btn:disabled {
+  opacity: 0.85;
+}
+
+/* 色だけに頼らず、記号でも正誤がわかるようにする */
+.choice-btn.correct::before,
+.choice-btn.reveal-correct::before {
+  content: "✓ ";
+}
+
+.choice-btn.wrong::before {
+  content: "✗ ";
+}
+
+.choice-btn.correct {
+  background: #dcfce7;
+  border-color: #22c55e;
+}
+
+.choice-btn.wrong {
+  background: #fee2e2;
+  border-color: #ef4444;
+}
+
+.choice-btn.reveal-correct {
+  background: #dcfce7;
+  border-color: #22c55e;
+}
+
+.btn-dontknow {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 12px;
+  font-size: 1rem;
+  font-weight: bold;
+  border: 2px dashed #9ca3af;
+  border-radius: 12px;
+  background: #f3f4f6;
+  color: #4b5563;
+  cursor: pointer;
+}
+
+.feedback {
+  text-align: center;
+  font-size: 1.2rem;
+  font-weight: bold;
+  margin-top: 16px;
+  padding: 12px;
+  border-radius: 12px;
+}
+
+.feedback-fact {
+  font-size: 0.95rem;
+  font-weight: normal;
+  margin-top: 6px;
+}
+
+.feedback.ok {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.feedback.ng {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.btn-next {
+  display: block;
+  width: 100%;
+  margin-top: 16px;
+  padding: 16px;
+  font-size: 1.1rem;
+  font-weight: bold;
+  border: none;
+  border-radius: 12px;
+  background: #2563eb;
+  color: white;
+  cursor: pointer;
+}
+
+.btn-next.secondary {
+  background: #6b7280;
+}
+
+/* --- 結果画面 --- */
+.result-summary {
+  text-align: center;
+  font-size: 1.2rem;
+  font-weight: bold;
+}
+
+.result-wrong {
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 14px 18px;
+  margin-bottom: 16px;
+  min-height: 2em;
+}
+
+.result-wrong ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.result-wrong li {
+  margin-bottom: 8px;
+}
+
+.result-buttons {
+  display: grid;
+  gap: 12px;
+}
+
+/* スマホなど狭い画面 */
+@media (max-width: 480px) {
+  html, body { font-size: 16px; }
+  .check-grid { grid-template-columns: 1fr; }
+  .course-grid { grid-template-columns: 1fr; }
+  .region-check-grid { grid-template-columns: repeat(2, 1fr); }
+}

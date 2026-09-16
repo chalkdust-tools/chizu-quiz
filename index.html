@@ -18,26 +18,26 @@
 
     <div class="box">
       <h2>コースを選ぼう</h2>
-      <p class="hint">「今日の10問／20問」は範囲の設定なしで、全部からバランスよく出題します。</p>
+      <p class="hint">どのコースも、下で選んだ出題範囲から出題します（何も変えなければ全分野からバランスよく出題します）。</p>
       <div class="course-grid">
         <button class="course-btn" data-course="today10">今日の10問</button>
         <button class="course-btn" data-course="today20">今日の20問</button>
-        <button class="course-btn" data-course="30">30問（下の範囲で）</button>
-        <button class="course-btn" data-course="endless">エンドレス（下の範囲で）</button>
+        <button class="course-btn" data-course="30">30問</button>
+        <button class="course-btn" data-course="endless">エンドレス</button>
         <button class="course-btn" id="btn-review" data-course="review" disabled>まちがえた問題だけ復習</button>
       </div>
     </div>
 
     <div class="box">
-      <h2>出題する範囲を選ぼう</h2>
-      <p class="hint">「30問」「エンドレス」で使います。</p>
+      <h2>出題範囲を選ぼう</h2>
+      <p class="hint">選んだ範囲から問題が出ます。</p>
       <div class="check-grid">
         <label class="check-item"><input type="checkbox" id="chk-jpMap" checked> 日本地図</label>
         <label class="check-item"><input type="checkbox" id="chk-jpCapital" checked> 都道府県庁所在地</label>
         <label class="check-item"><input type="checkbox" id="chk-jpRegion" checked> 地方区分</label>
-        <label class="check-item"><input type="checkbox" id="chk-worldMap"> 世界地図</label>
-        <label class="check-item"><input type="checkbox" id="chk-worldCapital"> 世界の首都</label>
-        <label class="check-item"><input type="checkbox" id="chk-worldFlag"> 国旗</label>
+        <label class="check-item"><input type="checkbox" id="chk-worldMap" checked> 世界地図</label>
+        <label class="check-item"><input type="checkbox" id="chk-worldCapital" checked> 世界の首都</label>
+        <label class="check-item"><input type="checkbox" id="chk-worldFlag" checked> 国旗</label>
       </div>
 
       <details class="custom-box">

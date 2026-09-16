@@ -1124,20 +1124,22 @@ function startQuiz(course) {
     state.targetLength = tickets.length;
     state.categories = ALL_CATEGORIES;
     state.filters = { jpRegions: [], worldRegions: [], levelOnly: null };
-  } else if (course === "today10" || course === "today20") {
-    state.mode = "fixed";
-    state.categories = ALL_CATEGORIES;
-    state.filters = { jpRegions: [], worldRegions: [], levelOnly: null };
-    state.targetLength = course === "today10" ? 10 : 20;
   } else {
+    // today10/today20/30/エンドレスは、すべて同じ「出題範囲を選ぼう」の
+    // チェックボックス（＋「さらに絞り込む」の設定）をそのまま使う。
+    // 何も変えていなければ全分野が選択済みなので、従来どおりの
+    // 「全部からバランスよく出題」がそのまま今日の10問／20問にも適用される。
     const categories = getSelectedCategories();
     if (categories.length === 0) {
-      showHomeMessage("出題する範囲を1つ以上選んでください");
+      showHomeMessage("出題範囲を1つ以上選んでください");
       return;
     }
     state.categories = categories;
     state.filters = getSelectedFilters();
-    if (course === "30") {
+    if (course === "today10" || course === "today20") {
+      state.mode = "fixed";
+      state.targetLength = course === "today10" ? 10 : 20;
+    } else if (course === "30") {
       state.mode = "fixed";
       state.targetLength = 30;
     } else {
